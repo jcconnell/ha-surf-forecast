@@ -1,0 +1,92 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a surf spot",
+        "description": "Enter your Stormglass API key and pick the break you want to forecast. Shore direction is the compass bearing the beach faces out to sea, which is what makes offshore and onshore winds meaningful.",
+        "data": {
+          "name": "Spot name",
+          "api_key": "Stormglass API key",
+          "location": "Spot location",
+          "shore_direction": "Shore direction (bearing the beach faces)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update your Stormglass API key",
+        "data": {
+          "api_key": "Stormglass API key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach Stormglass. Check your connection and try again.",
+      "invalid_auth": "Stormglass rejected that API key."
+    },
+    "abort": {
+      "already_configured": "That spot is already set up.",
+      "reauth_successful": "Your API key was updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Surf spot options",
+        "description": "The free Stormglass plan allows 10 requests per day. Each refresh costs one request for the forecast, plus one each for tide and astronomy when those need renewing. A 6 hour interval lands at roughly 6 requests per day.",
+        "data": {
+          "update_interval_hours": "Hours between forecast refreshes",
+          "forecast_days": "Days of forecast to request",
+          "shore_direction": "Shore direction (bearing the beach faces)",
+          "ideal_min_height": "Smallest wave height you consider good",
+          "ideal_max_height": "Largest wave height you consider good",
+          "good_surf_threshold": "Rating that counts as good surf",
+          "tide_datum": "Tide datum",
+          "enable_tide": "Fetch tide data",
+          "enable_astronomy": "Fetch sunrise, sunset and moon data"
+        }
+      }
+    },
+    "error": {
+      "ideal_range_invalid": "The smallest good wave height must be below the largest."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "surf_rating": { "name": "Surf rating" },
+      "surf_conditions": { "name": "Surf conditions" },
+      "wind_relation": { "name": "Wind direction relative to shore" },
+      "best_window": { "name": "Best window today" },
+      "wave_height": { "name": "Wave height" },
+      "wave_period": { "name": "Wave period" },
+      "wave_direction": { "name": "Wave direction" },
+      "swell_height": { "name": "Swell height" },
+      "swell_period": { "name": "Swell period" },
+      "swell_direction": { "name": "Swell direction" },
+      "secondary_swell_height": { "name": "Secondary swell height" },
+      "secondary_swell_period": { "name": "Secondary swell period" },
+      "secondary_swell_direction": { "name": "Secondary swell direction" },
+      "wind_wave_height": { "name": "Wind wave height" },
+      "wind_wave_period": { "name": "Wind wave period" },
+      "wind_speed": { "name": "Wind speed" },
+      "wind_gust": { "name": "Wind gust" },
+      "wind_direction": { "name": "Wind direction" },
+      "water_temperature": { "name": "Water temperature" },
+      "air_temperature": { "name": "Air temperature" },
+      "current_speed": { "name": "Current speed" },
+      "current_direction": { "name": "Current direction" },
+      "tide_state": { "name": "Tide" },
+      "next_high_tide": { "name": "Next high tide" },
+      "next_low_tide": { "name": "Next low tide" },
+      "sunrise": { "name": "Sunrise" },
+      "sunset": { "name": "Sunset" },
+      "moon_phase": { "name": "Moon phase" },
+      "moon_illumination": { "name": "Moon illumination" },
+      "requests_remaining": { "name": "API requests remaining" },
+      "last_forecast_fetch": { "name": "Last forecast fetch" }
+    },
+    "binary_sensor": {
+      "good_surf": { "name": "Good surf" },
+      "offshore_wind": { "name": "Clean wind" },
+      "quota_exhausted": { "name": "API quota exhausted" }
+    }
+  }
+}

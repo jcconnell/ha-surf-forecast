@@ -1,0 +1,223 @@
+"""Surf quality scoring.
+
+Pure functions with no Home Assistant or network dependencies, so the rating
+model can be exercised directly in unit tests.
+
+The model answers three questions a surfer asks in order:
+  1. Is there enough swell to ride?   -> height_score
+  2. Does it have any power behind it? -> period_score
+  3. Is the wind wrecking it?          -> wind_score
+
+Size gates everything: a glassy 12 second groundswell is still a zero if the
+ocean is flat, so the height score multiplies rather than averages.
+"""
+
+from __future__ import annotations
+
+import math
+
+# Below this the spot is not rideable at all.
+MIN_RIDEABLE_HEIGHT = 0.3
+# Above this it is closing out / beyond most surfers, but never scored zero.
+MAX_RIDEABLE_HEIGHT = 6.0
+OVERSIZED_FLOOR = 0.15
+
+# Wind speeds in m/s.
+GLASSY_WIND = 1.5
+FULL_WIND_INFLUENCE = 10.0
+STRONG_OFFSHORE = 9.0
+
+# Swell periods in seconds.
+MIN_PERIOD = 5.0
+MAX_PERIOD = 15.0
+MIN_PERIOD_SCORE = 0.1
+
+CONDITION_FLAT = "Flat"
+CONDITION_POOR = "Poor"
+CONDITION_FAIR = "Fair"
+CONDITION_GOOD = "Good"
+CONDITION_VERY_GOOD = "Very good"
+CONDITION_EPIC = "Epic"
+
+CONDITION_BANDS = (
+    (1.0, CONDITION_FLAT),
+    (3.0, CONDITION_POOR),
+    (5.0, CONDITION_FAIR),
+    (7.0, CONDITION_GOOD),
+    (8.5, CONDITION_VERY_GOOD),
+    (10.01, CONDITION_EPIC),
+)
+
+WIND_OFFSHORE = "Offshore"
+WIND_CROSS_OFFSHORE = "Cross-offshore"
+WIND_CROSS_SHORE = "Cross-shore"
+WIND_CROSS_ONSHORE = "Cross-onshore"
+WIND_ONSHORE = "Onshore"
+WIND_GLASSY = "Glassy"
+
+WIND_BANDS = (
+    (30.0, WIND_OFFSHORE),
+    (75.0, WIND_CROSS_OFFSHORE),
+    (105.0, WIND_CROSS_SHORE),
+    (150.0, WIND_CROSS_ONSHORE),
+    (180.01, WIND_ONSHORE),
+)
+
+COMPASS_POINTS = (
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+)
+
+
+def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    """Constrain value to the inclusive range [low, high]."""
+    return max(low, min(high, value))
+
+
+def angle_difference(a: float, b: float) -> float:
+    """Smallest absolute angle between two bearings, in degrees (0-180)."""
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def compass_point(bearing: float | None) -> str | None:
+    """Convert a bearing in degrees to a 16-point compass abbreviation."""
+    if bearing is None:
+        return None
+    return COMPASS_POINTS[int((bearing % 360.0) / 22.5 + 0.5) % 16]
+
+
+def offshore_offset(wind_from: float, shore_direction: float) -> float:
+    """Degrees between the wind and a perfectly offshore wind.
+
+    ``shore_direction`` is the bearing the beach faces out to sea, so a truly
+    offshore wind arrives from the opposite bearing. Returns 0 for dead
+    offshore through 180 for dead onshore.
+    """
+    return angle_difference(wind_from, (shore_direction + 180.0) % 360.0)
+
+
+def wind_relation(
+    wind_from: float | None,
+    shore_direction: float,
+    wind_speed: float | None = None,
+) -> str | None:
+    """Classify the wind relative to the shore, or call it glassy if calm."""
+    if wind_from is None:
+        return None
+    if wind_speed is not None and wind_speed <= GLASSY_WIND:
+        return WIND_GLASSY
+    offset = offshore_offset(wind_from, shore_direction)
+    for limit, label in WIND_BANDS:
+        if offset < limit:
+            return label
+    return WIND_ONSHORE
+
+
+def height_score(
+    height: float | None,
+    ideal_min: float,
+    ideal_max: float,
+) -> float:
+    """Score wave size from 0 (flat) to 1 (in the ideal band)."""
+    if height is None or height <= MIN_RIDEABLE_HEIGHT:
+        return 0.0
+    if height < ideal_min:
+        span = ideal_min - MIN_RIDEABLE_HEIGHT
+        if span <= 0:
+            return 1.0
+        return clamp((height - MIN_RIDEABLE_HEIGHT) / span)
+    if height <= ideal_max:
+        return 1.0
+    if height >= MAX_RIDEABLE_HEIGHT:
+        return OVERSIZED_FLOOR
+    span = MAX_RIDEABLE_HEIGHT - ideal_max
+    if span <= 0:
+        return OVERSIZED_FLOOR
+    decay = (height - ideal_max) / span
+    return clamp(1.0 - (1.0 - OVERSIZED_FLOOR) * decay, OVERSIZED_FLOOR, 1.0)
+
+
+def period_score(period: float | None) -> float:
+    """Score swell period from 0.1 (wind slop) to 1 (long groundswell)."""
+    if period is None or period <= 0:
+        return 0.0
+    if period <= MIN_PERIOD:
+        return MIN_PERIOD_SCORE
+    if period >= MAX_PERIOD:
+        return 1.0
+    fraction = (period - MIN_PERIOD) / (MAX_PERIOD - MIN_PERIOD)
+    return clamp(MIN_PERIOD_SCORE + (1.0 - MIN_PERIOD_SCORE) * fraction)
+
+
+def wind_score(
+    wind_speed: float | None,
+    wind_from: float | None,
+    shore_direction: float,
+) -> float:
+    """Score how much the wind helps or ruins the surface, 0 to 1.
+
+    Calm air is ideal whatever its direction. As the wind builds, direction
+    matters more; a hard offshore is penalised too, because it holds waves up
+    and eventually stops them breaking cleanly.
+    """
+    if wind_speed is None:
+        return 0.5
+    if wind_speed <= GLASSY_WIND:
+        return 1.0
+    if wind_from is None:
+        return 0.5
+
+    offset = offshore_offset(wind_from, shore_direction)
+    # 1.0 dead offshore, 0.5 cross-shore, 0.0 dead onshore.
+    direction_quality = (math.cos(math.radians(offset)) + 1.0) / 2.0
+
+    influence = clamp(
+        (wind_speed - GLASSY_WIND) / (FULL_WIND_INFLUENCE - GLASSY_WIND)
+    )
+    score = 1.0 - influence * (1.0 - direction_quality)
+
+    if wind_speed > STRONG_OFFSHORE and direction_quality > 0.5:
+        score *= clamp(1.0 - (wind_speed - STRONG_OFFSHORE) / 12.0, 0.4, 1.0)
+
+    return clamp(score)
+
+
+def surf_rating(
+    wave_height: float | None,
+    swell_period: float | None,
+    wind_speed: float | None,
+    wind_from: float | None,
+    shore_direction: float,
+    ideal_min: float,
+    ideal_max: float,
+) -> dict[str, float | None]:
+    """Combine the component scores into a 0-10 rating.
+
+    Returns the rating alongside its components so the sensor can expose the
+    reasoning as attributes instead of an unexplained number.
+    """
+    h = height_score(wave_height, ideal_min, ideal_max)
+    p = period_score(swell_period)
+    w = wind_score(wind_speed, wind_from, shore_direction)
+
+    # Cleanliness and power modulate the rating, size gates it.
+    quality = 0.40 * p + 0.60 * w
+    rating = 10.0 * h * (0.15 + 0.85 * quality)
+    rating = round(clamp(rating, 0.0, 10.0), 1)
+
+    return {
+        "rating": rating,
+        "height_score": round(h, 3),
+        "period_score": round(p, 3),
+        "wind_score": round(w, 3),
+    }
+
+
+def conditions_text(rating: float | None) -> str | None:
+    """Map a 0-10 rating onto a human readable condition."""
+    if rating is None:
+        return None
+    for limit, label in CONDITION_BANDS:
+        if rating < limit:
+            return label
+    return CONDITION_EPIC

@@ -1,0 +1,11 @@
+{
+  "domain": "surf_forecast",
+  "name": "Surf Forecast (Stormglass)",
+  "codeowners": ["@jcconnell"],
+  "config_flow": true,
+  "documentation": "https://github.com/jcconnell/ha-surf-forecast",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/jcconnell/ha-surf-forecast/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
