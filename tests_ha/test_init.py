@@ -286,6 +286,11 @@ async def test_current_conditions_advance_hourly_without_new_requests(
     aioclient_mock.get(ENDPOINT_TIDE_EXTREMES, json=tide_payload)
     aioclient_mock.get(ENDPOINT_ASTRONOMY, json=astronomy_payload)
 
+    # Pin the clock to the top of the hour. Otherwise which forecast hour is
+    # "nearest" depends on what minute the suite happens to run at: at 11:34
+    # the nearest hour to now is the 12:00 entry, not the 11:00 one.
+    freezer.move_to(now)
+
     await _setup(hass)
     assert float(hass.states.get("sensor.test_beach_wave_height").state) == 1.0
     assert len(aioclient_mock.mock_calls) == 3
