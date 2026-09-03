@@ -17,6 +17,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from . import coastline, geo, overpass
 from .api import (
     StormglassAuthError,
     StormglassClient,
@@ -34,6 +35,7 @@ from .const import (
     CONF_LATITUDE,
     CONF_LOCATION,
     CONF_LONGITUDE,
+    CONF_SEA_LOCATION,
     CONF_SHORE_DIRECTION,
     CONF_TIDE_DATUM,
     CONF_UPDATE_INTERVAL,
@@ -45,6 +47,8 @@ from .const import (
     DEFAULT_TIDE_DATUM,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
+    MIN_SEA_DISTANCE_M,
+    OFFSHORE_PIN_M,
     TIDE_DATUMS,
 )
 
@@ -56,10 +60,15 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        """Initialise per-flow state."""
+        self._spot: dict[str, Any] = {}
+        self._estimate: coastline.ShoreEstimate | None = None
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Collect the API key, the spot's coordinates and its orientation."""
+        """Collect the API key and the break's location."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -76,16 +85,17 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
             if error:
                 errors["base"] = error
             else:
-                return self.async_create_entry(
-                    title=user_input[CONF_NAME],
-                    data={
-                        CONF_NAME: user_input[CONF_NAME],
-                        CONF_API_KEY: user_input[CONF_API_KEY],
-                        CONF_LATITUDE: latitude,
-                        CONF_LONGITUDE: longitude,
-                        CONF_SHORE_DIRECTION: user_input[CONF_SHORE_DIRECTION],
-                    },
+                self._spot = {
+                    CONF_NAME: user_input[CONF_NAME],
+                    CONF_API_KEY: user_input[CONF_API_KEY],
+                    CONF_LATITUDE: latitude,
+                    CONF_LONGITUDE: longitude,
+                }
+                # Best effort, so a slow or missing Overpass never blocks setup.
+                self._estimate = await overpass.async_estimate_shore_direction(
+                    async_get_clientsession(self.hass), latitude, longitude
                 )
+                return await self.async_step_shore()
 
         return self.async_show_form(
             step_id="user",
@@ -100,6 +110,94 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
                 },
             ),
             errors=errors,
+        )
+
+    async def async_step_shore(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Offer the two ways of setting which way the beach faces."""
+        return self.async_show_menu(
+            step_id="shore",
+            menu_options=["shore_map", "shore_manual"],
+            description_placeholders={"estimate": self._estimate_text()},
+        )
+
+    async def async_step_shore_map(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Derive the shore direction from a pin dropped out in the water."""
+        errors: dict[str, str] = {}
+        spot_lat = self._spot[CONF_LATITUDE]
+        spot_lon = self._spot[CONF_LONGITUDE]
+
+        if user_input is not None:
+            sea = user_input[CONF_SEA_LOCATION]
+            sea_lat, sea_lon = sea[CONF_LATITUDE], sea[CONF_LONGITUDE]
+            if geo.distance_m(spot_lat, spot_lon, sea_lat, sea_lon) < MIN_SEA_DISTANCE_M:
+                errors[CONF_SEA_LOCATION] = "sea_point_too_close"
+            else:
+                bearing = geo.initial_bearing(spot_lat, spot_lon, sea_lat, sea_lon)
+                return self._create_entry(round(bearing, 1))
+
+        # Start the pin offshore along the estimate so it only needs nudging.
+        pin_lat, pin_lon = geo.destination(
+            spot_lat,
+            spot_lon,
+            self._estimate.bearing if self._estimate else DEFAULT_SHORE_DIRECTION,
+            OFFSHORE_PIN_M,
+        )
+        return self.async_show_form(
+            step_id="shore_map",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({vol.Required(CONF_SEA_LOCATION): selector.LocationSelector()}),
+                {CONF_SEA_LOCATION: {CONF_LATITUDE: pin_lat, CONF_LONGITUDE: pin_lon}},
+            ),
+            errors=errors,
+            description_placeholders={"estimate": self._estimate_text()},
+        )
+
+    async def async_step_shore_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Take the shore direction as a bearing."""
+        if user_input is not None:
+            return self._create_entry(float(user_input[CONF_SHORE_DIRECTION]))
+
+        return self.async_show_form(
+            step_id="shore_manual",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({vol.Required(CONF_SHORE_DIRECTION): _bearing_selector()}),
+                {
+                    CONF_SHORE_DIRECTION: (
+                        self._estimate.bearing
+                        if self._estimate
+                        else DEFAULT_SHORE_DIRECTION
+                    )
+                },
+            ),
+            description_placeholders={"estimate": self._estimate_text()},
+        )
+
+    def _create_entry(self, shore_direction: float) -> ConfigFlowResult:
+        """Finish the flow with the resolved shore direction."""
+        return self.async_create_entry(
+            title=self._spot[CONF_NAME],
+            data={**self._spot, CONF_SHORE_DIRECTION: shore_direction},
+        )
+
+    def _estimate_text(self) -> str:
+        """Human readable summary of the coastline estimate, for the forms."""
+        if self._estimate is None:
+            return (
+                "No coastline estimate was available for this spot, so please "
+                "set the direction yourself."
+            )
+        confidence = "looks reliable" if self._estimate.confident else "is rough"
+        return (
+            f"OpenStreetMap suggests about {self._estimate.bearing:.0f} degrees "
+            f"({_compass(self._estimate.bearing)}); this estimate {confidence} "
+            f"(agreement {self._estimate.coherence:.2f} across "
+            f"{self._estimate.segments} coastline segments)."
         )
 
     async def async_step_reauth(
@@ -185,6 +283,28 @@ class SurfForecastOptionsFlow(OptionsFlow):
         )
 
 
+def _bearing_selector() -> selector.NumberSelector:
+    """A 0-359 degree bearing input."""
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0,
+            max=359,
+            step=1,
+            unit_of_measurement="deg",
+            mode=selector.NumberSelectorMode.BOX,
+        )
+    )
+
+
+def _compass(bearing: float) -> str:
+    """16-point compass abbreviation, for readable form text."""
+    points = (
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+    )
+    return points[int((bearing % 360.0) / 22.5 + 0.5) % 16]
+
+
 def _user_schema() -> vol.Schema:
     """Schema for the initial setup step."""
     return vol.Schema(
@@ -192,17 +312,6 @@ def _user_schema() -> vol.Schema:
             vol.Required(CONF_NAME, default="Surf"): selector.TextSelector(),
             vol.Required(CONF_API_KEY): selector.TextSelector(),
             vol.Required(CONF_LOCATION): selector.LocationSelector(),
-            vol.Required(
-                CONF_SHORE_DIRECTION, default=DEFAULT_SHORE_DIRECTION
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    max=359,
-                    step=1,
-                    unit_of_measurement="deg",
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
         }
     )
 
@@ -223,12 +332,7 @@ def _options_schema() -> vol.Schema:
                     mode=selector.NumberSelectorMode.BOX,
                 )
             ),
-            vol.Required(CONF_SHORE_DIRECTION): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0, max=359, step=1, unit_of_measurement="deg",
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
+            vol.Required(CONF_SHORE_DIRECTION): _bearing_selector(),
             vol.Required(CONF_IDEAL_MIN_HEIGHT): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0.3, max=10.0, step=0.1, unit_of_measurement="m",

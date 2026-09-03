@@ -58,10 +58,38 @@ quality = 0.40 * period_score + 0.60 * wind_score
 rating  = 10 * height_score * (0.15 + 0.85 * quality)
 ```
 
-**Shore direction is what makes the wind meaningful.** Set it to the compass
-bearing the beach faces out to sea — a west-facing California beach is `270`.
-An offshore wind then arrives from `90`. Get this wrong and the wind scoring
-is backwards.
+## Which way does the beach face?
+
+Shore direction is the compass bearing the beach looks out to sea: a
+west-facing California beach is `270`, a south-facing one is `180`. An offshore
+wind then arrives from the opposite bearing. **Get this wrong and the wind
+scoring inverts**, so setup offers three ways to get it right.
+
+**1. Point at the water.** Setup shows a map with a pin already dropped roughly
+offshore. Drag it to any point in the open water in front of the break and the
+bearing is computed for you. This is the easy path — nobody has to estimate a
+compass bearing.
+
+**2. A coastline estimate.** Both setup paths are prefilled from OpenStreetMap
+coastline data. OSM draws `natural=coastline` with land on the left and water
+on the right, so a segment's seaward normal is its bearing plus 90 degrees.
+Taking the nearest segment is unreliable near harbours and jetties — exactly
+where surf spots are — so this takes a length-weighted circular mean of nearby
+segments, ignores anything under 50 m, and reports how well they agreed. If
+they do not agree, no estimate is offered rather than a confident wrong one.
+
+**3. Enter the bearing** directly, if you already know it.
+
+### The integration checks your answer
+
+Waves cannot cross land to reach a break. So if the forecast shows swell
+persistently arriving from behind the beach, the shore direction must be wrong
+— and the integration says so, with a repair notice suggesting a better value.
+This runs on data already fetched, so it costs no API quota.
+
+You do not need to be precise: the rating moves by roughly 0.3 per 10 degrees,
+so within about 15 degrees is plenty. Being 80 degrees out is what flips
+offshore to onshore.
 
 ## Staying inside 10 requests a day
 
@@ -106,8 +134,8 @@ directory and restart Home Assistant.
 1. Get a free API key at
    [dashboard.stormglass.io](https://dashboard.stormglass.io/register).
 2. Settings → Devices & Services → **Add Integration** → *Surf Forecast*.
-3. Enter a spot name, the API key, the break's location, and the shore
-   direction.
+3. Enter a spot name, the API key, and the break's location. The next screen
+   asks which way the beach faces — see above.
 
 Add the integration again for each additional spot. Note that every extra spot
 multiplies your request usage, which the free plan will not stretch far.
@@ -125,8 +153,13 @@ multiplies your request usage, which the free plan will not stretch far.
 | Fetch tide data | on | Turn off to save a request |
 | Fetch sunrise, sunset and moon data | on | Turn off to save a request |
 
-Wave heights are reported in metres and shown in feet on the US unit system.
-Any height entity's unit can be changed individually in its settings.
+### Units
+
+Wave heights are reported in metres and shown in feet on the US unit system;
+wind is reported in m/s and shown in mph. Every one of those can be overridden
+per entity in Home Assistant — open the entity, then its settings, and pick a
+unit. Wind speed and gust accept **knots** (`kn`), which is usually what you
+want for a marine forecast, along with km/h, ft/s and Beaufort.
 
 ## Example automation
 

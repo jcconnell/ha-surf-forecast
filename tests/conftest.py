@@ -21,8 +21,8 @@ if PACKAGE not in sys.modules:
     package.__path__ = [str(COMPONENT_DIR)]
     sys.modules[PACKAGE] = package
 
-    # const must load first; parse imports from it.
-    for module_name in ("const", "surf", "parse"):
+    # const must load first; geo before surf; parse and coastline after.
+    for module_name in ("const", "geo", "surf", "parse", "coastline"):
         spec = importlib.util.spec_from_file_location(
             f"{PACKAGE}.{module_name}", COMPONENT_DIR / f"{module_name}.py"
         )

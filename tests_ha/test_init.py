@@ -6,6 +6,7 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -303,3 +304,88 @@ async def test_current_conditions_advance_hourly_without_new_requests(
     assert float(hass.states.get("sensor.test_beach_wave_height").state) == 2.0
     # Crucially, that cost nothing.
     assert len(aioclient_mock.mock_calls) == 3
+
+
+def _payload_with_wave_direction(now, direction):
+    """A forecast whose swell arrives consistently from one bearing."""
+    return {
+        "hours": [
+            {
+                "time": (now + timedelta(hours=offset)).isoformat(),
+                "waveHeight": {"sg": 1.5},
+                "waveDirection": {"sg": direction},
+                "swellPeriod": {"sg": 12.0},
+                "windSpeed": {"sg": 3.0},
+                "windDirection": {"sg": 90.0},
+            }
+            for offset in range(48)
+        ],
+        "meta": {"dailyQuota": 10, "requestCount": 1},
+    }
+
+
+async def test_swell_arriving_from_inland_raises_a_repair_issue(
+    hass, aioclient_mock, freezer, now, tide_payload, astronomy_payload
+):
+    """The real Kewalos mistake: a south-facing break configured as west-facing.
+
+    Waves cannot cross land to reach a break, so a swell persistently arriving
+    from behind the beach proves the shore direction is wrong.
+    """
+    # Shore says 270 (west), but the swell arrives from 116 (ESE) all week.
+    aioclient_mock.get(ENDPOINT_WEATHER, json=_payload_with_wave_direction(now, 116.0))
+    aioclient_mock.get(ENDPOINT_TIDE_EXTREMES, json=tide_payload)
+    aioclient_mock.get(ENDPOINT_ASTRONOMY, json=astronomy_payload)
+
+    entry = await _setup(hass)
+
+    registry = ir.async_get(hass)
+    issue = registry.async_get_issue(
+        DOMAIN, f"shore_direction_suspect_{entry.entry_id}"
+    )
+    assert issue is not None
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert issue.translation_placeholders["configured"] == "270"
+    assert issue.translation_placeholders["wave_from"] == "116"
+
+    sensor = hass.states.get("sensor.test_beach_wind_direction_relative_to_shore")
+    assert sensor.attributes["shore_direction_suspect"] is True
+    assert sensor.attributes["mean_wave_from"] == pytest.approx(116.0, abs=0.5)
+
+
+async def test_a_plausible_shore_direction_raises_no_issue(
+    hass, aioclient_mock, freezer, now, tide_payload, astronomy_payload
+):
+    """Swell from seaward is normal and must stay silent."""
+    # Shore 270 (west), swell arriving from 260 — straight onshore, fine.
+    aioclient_mock.get(ENDPOINT_WEATHER, json=_payload_with_wave_direction(now, 260.0))
+    aioclient_mock.get(ENDPOINT_TIDE_EXTREMES, json=tide_payload)
+    aioclient_mock.get(ENDPOINT_ASTRONOMY, json=astronomy_payload)
+
+    entry = await _setup(hass)
+
+    registry = ir.async_get(hass)
+    assert (
+        registry.async_get_issue(DOMAIN, f"shore_direction_suspect_{entry.entry_id}")
+        is None
+    )
+    sensor = hass.states.get("sensor.test_beach_wind_direction_relative_to_shore")
+    assert sensor.attributes["shore_direction_suspect"] is False
+
+
+async def test_a_grazing_swell_angle_does_not_raise_a_false_alarm(
+    hass, aioclient_mock, freezer, now, tide_payload, astronomy_payload
+):
+    """Refraction means swell can arrive slightly past 90 degrees legitimately."""
+    # 95 degrees off the shore normal — past side-on, but not from inland.
+    aioclient_mock.get(ENDPOINT_WEATHER, json=_payload_with_wave_direction(now, 175.0))
+    aioclient_mock.get(ENDPOINT_TIDE_EXTREMES, json=tide_payload)
+    aioclient_mock.get(ENDPOINT_ASTRONOMY, json=astronomy_payload)
+
+    entry = await _setup(hass)
+
+    registry = ir.async_get(hass)
+    assert (
+        registry.async_get_issue(DOMAIN, f"shore_direction_suspect_{entry.entry_id}")
+        is None
+    )

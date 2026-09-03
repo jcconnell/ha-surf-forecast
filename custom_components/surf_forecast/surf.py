@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import math
 
+# Re-exported so callers of this module keep a single scoring entry point.
+from .geo import angle_difference  # noqa: F401
+
 # Below this the spot is not rideable at all.
 MIN_RIDEABLE_HEIGHT = 0.3
 # Above this it is closing out / beyond most surfers, but never scored zero.
@@ -72,11 +75,6 @@ COMPASS_POINTS = (
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     """Constrain value to the inclusive range [low, high]."""
     return max(low, min(high, value))
-
-
-def angle_difference(a: float, b: float) -> float:
-    """Smallest absolute angle between two bearings, in degrees (0-180)."""
-    return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
 def compass_point(bearing: float | None) -> str | None:
