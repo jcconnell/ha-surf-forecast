@@ -14,20 +14,20 @@
         "title": "Which way does the beach face?",
         "description": "This is the single most important setting: it is what makes a wind offshore or onshore, and getting it wrong inverts the rating.\n\n{estimate}\n\nPick how you want to set it.",
         "menu_options": {
-          "shore_map": "Point at the water on a map (easiest)",
+          "shore_map": "Drag a pin into the water (easiest)",
           "shore_manual": "Enter the compass bearing myself"
         }
       },
       "shore_map": {
-        "title": "Point at the water",
-        "description": "Drag the pin to any point in the open water in front of the break, and the bearing will be worked out for you. The pin has been placed roughly offshore already.\n\n{estimate}",
+        "title": "Drag the pin into the water",
+        "description": "The map is centred on your break, with the pin sitting on it.\n\n**Drag the pin straight out into the open water** in front of the break — any distance beyond about 50 m — and the direction the beach faces is worked out from where it lands. You will see the result as a compass bearing on the next screen before anything is saved.\n\nThe map only shows one marker, so it will not leave a pin behind on the break itself.\n\n{estimate}",
         "data": {
-          "sea_location": "A point out in the water"
+          "sea_location": "Drag this into the water"
         }
       },
       "shore_manual": {
-        "title": "Shore direction",
-        "description": "The compass bearing the beach faces out to sea. A beach looking west is 270, one looking south is 180.\n\n{estimate}",
+        "title": "Confirm the shore direction",
+        "description": "{estimate}\n\nThe bearing is the way the beach looks out to sea: 180 is south-facing, 270 is west-facing.",
         "data": {
           "shore_direction": "Shore direction"
         }
@@ -42,7 +42,7 @@
     "error": {
       "cannot_connect": "Could not reach Stormglass. Check your connection and try again.",
       "invalid_auth": "Stormglass rejected that API key.",
-      "sea_point_too_close": "That point is too close to the break to give a reliable bearing. Move it further out to sea."
+      "sea_point_too_close": "The pin is still on the break. Drag it out into the water, at least 50 m away, so there is a direction to measure."
     },
     "abort": {
       "already_configured": "That spot is already set up.",

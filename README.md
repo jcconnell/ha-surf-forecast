@@ -65,10 +65,15 @@ west-facing California beach is `270`, a south-facing one is `180`. An offshore
 wind then arrives from the opposite bearing. **Get this wrong and the wind
 scoring inverts**, so setup offers three ways to get it right.
 
-**1. Point at the water.** Setup shows a map with a pin already dropped roughly
-offshore. Drag it to any point in the open water in front of the break and the
-bearing is computed for you. This is the easy path — nobody has to estimate a
-compass bearing.
+**1. Drag a pin into the water.** Setup shows a map centred on your break with
+the pin sitting on it. Drag that pin straight out into the open water and the
+bearing is computed from where it lands, then shown back to you as a compass
+direction to confirm before anything is saved.
+
+Home Assistant's map selector only ever shows one marker, so it cannot leave a
+second pin behind on the break. That is why the pin starts *on* the break: the
+gesture is "drag this into the sea", which needs no second marker to make
+sense, and the confirmation screen is what tells you it came out right.
 
 **2. A coastline estimate.** Both setup paths are prefilled from OpenStreetMap
 coastline data. OSM draws `natural=coastline` with land on the left and water
