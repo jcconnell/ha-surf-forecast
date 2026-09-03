@@ -8,6 +8,11 @@ whether it is worth going.
 Built around one hard constraint: **the free Stormglass plan allows 10 API
 requests per day.** Most of the design below exists to stay under that.
 
+## Examples
+<img width="425" alt="Light" src="https://github.com/user-attachments/assets/d4fae560-808b-4fcd-9eb6-abdacaa13319" /> <img width="425" alt="dark" src="https://github.com/user-attachments/assets/aa6dc361-67a7-43be-8deb-59fe809660c0" />
+
+
+
 ## What you get
 
 Each spot you add becomes a device with these entities.
