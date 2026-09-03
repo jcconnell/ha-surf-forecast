@@ -64,6 +64,8 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
         """Initialise per-flow state."""
         self._spot: dict[str, Any] = {}
         self._estimate: coastline.ShoreEstimate | None = None
+        self._derived: float | None = None
+        self._sea_distance: float | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -125,7 +127,13 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_shore_map(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Derive the shore direction from a pin dropped out in the water."""
+        """Derive the shore direction by dragging the pin out into the water.
+
+        Home Assistant's location selector shows a single marker, so the pin
+        starts on the break itself: the gesture is "drag this from the spot
+        into the sea", which needs no second marker to make sense. The result
+        is then shown as a bearing for confirmation.
+        """
         errors: dict[str, str] = {}
         spot_lat = self._spot[CONF_LATITUDE]
         spot_lon = self._spot[CONF_LONGITUDE]
@@ -133,24 +141,21 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             sea = user_input[CONF_SEA_LOCATION]
             sea_lat, sea_lon = sea[CONF_LATITUDE], sea[CONF_LONGITUDE]
-            if geo.distance_m(spot_lat, spot_lon, sea_lat, sea_lon) < MIN_SEA_DISTANCE_M:
+            distance = geo.distance_m(spot_lat, spot_lon, sea_lat, sea_lon)
+            if distance < MIN_SEA_DISTANCE_M:
                 errors[CONF_SEA_LOCATION] = "sea_point_too_close"
             else:
-                bearing = geo.initial_bearing(spot_lat, spot_lon, sea_lat, sea_lon)
-                return self._create_entry(round(bearing, 1))
+                self._derived = round(
+                    geo.initial_bearing(spot_lat, spot_lon, sea_lat, sea_lon), 1
+                )
+                self._sea_distance = distance
+                return await self.async_step_shore_manual()
 
-        # Start the pin offshore along the estimate so it only needs nudging.
-        pin_lat, pin_lon = geo.destination(
-            spot_lat,
-            spot_lon,
-            self._estimate.bearing if self._estimate else DEFAULT_SHORE_DIRECTION,
-            OFFSHORE_PIN_M,
-        )
         return self.async_show_form(
             step_id="shore_map",
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema({vol.Required(CONF_SEA_LOCATION): selector.LocationSelector()}),
-                {CONF_SEA_LOCATION: {CONF_LATITUDE: pin_lat, CONF_LONGITUDE: pin_lon}},
+                {CONF_SEA_LOCATION: {CONF_LATITUDE: spot_lat, CONF_LONGITUDE: spot_lon}},
             ),
             errors=errors,
             description_placeholders={"estimate": self._estimate_text()},
@@ -159,23 +164,29 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_shore_manual(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Take the shore direction as a bearing."""
+        """Confirm or type the shore direction.
+
+        Reached either straight from the menu, or after the map step with the
+        derived bearing prefilled so it can be sanity checked in words before
+        being committed.
+        """
         if user_input is not None:
             return self._create_entry(float(user_input[CONF_SHORE_DIRECTION]))
+
+        if self._derived is not None:
+            suggested = self._derived
+        elif self._estimate is not None:
+            suggested = self._estimate.bearing
+        else:
+            suggested = DEFAULT_SHORE_DIRECTION
 
         return self.async_show_form(
             step_id="shore_manual",
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema({vol.Required(CONF_SHORE_DIRECTION): _bearing_selector()}),
-                {
-                    CONF_SHORE_DIRECTION: (
-                        self._estimate.bearing
-                        if self._estimate
-                        else DEFAULT_SHORE_DIRECTION
-                    )
-                },
+                {CONF_SHORE_DIRECTION: suggested},
             ),
-            description_placeholders={"estimate": self._estimate_text()},
+            description_placeholders={"estimate": self._source_text(suggested)},
         )
 
     def _create_entry(self, shore_direction: float) -> ConfigFlowResult:
@@ -184,6 +195,20 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
             title=self._spot[CONF_NAME],
             data={**self._spot, CONF_SHORE_DIRECTION: shore_direction},
         )
+
+    def _source_text(self, suggested: float) -> str:
+        """Explain, in words, where the prefilled bearing came from."""
+        heading = f"{suggested:.0f} degrees ({_compass(suggested)})"
+        if self._derived is not None:
+            metres = f"{self._sea_distance:.0f}" if self._sea_distance else "?"
+            return (
+                f"Your map pin puts the water {metres} m away on a bearing of "
+                f"{heading}, so that is the direction the beach faces. Check it "
+                f"reads the way you expect, then save it or adjust it."
+            )
+        if self._estimate is not None:
+            return f"Prefilled from the coastline estimate: {heading}. {self._estimate_text()}"
+        return f"No estimate was available, so this is only a placeholder ({heading})."
 
     def _estimate_text(self) -> str:
         """Human readable summary of the coastline estimate, for the forms."""

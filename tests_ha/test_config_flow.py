@@ -43,6 +43,14 @@ ENTRY_DATA = {
 }
 
 
+def _suggested(schema, key):
+    """Read back the value a form field is prefilled with."""
+    for field in schema.schema:
+        if field == key:
+            return field.description["suggested_value"]
+    raise AssertionError(f"{key} not in schema")
+
+
 def _coastline_payload():
     """A straight coast drawn west to east, so the water lies to the south."""
     nodes, ids = [], []
@@ -92,8 +100,12 @@ async def test_user_step_leads_to_the_shore_menu(hass, aioclient_mock):
     assert set(result["menu_options"]) == {"shore_map", "shore_manual"}
 
 
-async def test_map_path_derives_the_bearing_from_two_points(hass, aioclient_mock):
-    """Dropping a pin due south of the break gives a shore direction of 180."""
+async def test_map_step_starts_the_pin_on_the_break(hass, aioclient_mock):
+    """The selector shows one marker, so it must start somewhere meaningful.
+
+    Starting it on the break makes the gesture "drag this into the water",
+    which needs no second marker to be understood.
+    """
     _mock_key_ok(aioclient_mock)
     _mock_overpass(aioclient_mock)
 
@@ -101,18 +113,66 @@ async def test_map_path_derives_the_bearing_from_two_points(hass, aioclient_mock
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": "shore_map"}
     )
-    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "shore_map"
 
+    suggested = _suggested(result["data_schema"], CONF_SEA_LOCATION)
+    assert suggested[CONF_LATITUDE] == pytest.approx(SPOT_LAT)
+    assert suggested[CONF_LONGITUDE] == pytest.approx(SPOT_LON)
+
+
+async def test_map_path_derives_the_bearing_then_asks_to_confirm(hass, aioclient_mock):
+    """Dragging the pin due south gives 180, shown for confirmation first."""
+    _mock_key_ok(aioclient_mock)
+    _mock_overpass(aioclient_mock)
+
+    result = await _to_shore_menu(hass, aioclient_mock)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "shore_map"}
+    )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_SEA_LOCATION: {CONF_LATITUDE: SPOT_LAT - 0.01, CONF_LONGITUDE: SPOT_LON}},
+    )
+
+    # Nothing is saved yet: the derived bearing comes back for a look.
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "shore_manual"
+    assert _suggested(result["data_schema"], CONF_SHORE_DIRECTION) == pytest.approx(
+        180.0, abs=0.5
+    )
+    assert "1" in result["description_placeholders"]["estimate"]
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SHORE_DIRECTION: 180}
     )
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_SHORE_DIRECTION] == pytest.approx(180.0, abs=0.5)
     assert result["data"][CONF_LATITUDE] == SPOT_LAT
+
+
+async def test_the_derived_bearing_can_be_overridden_on_confirmation(
+    hass, aioclient_mock
+):
+    """The confirm step is a real field, not a read-only summary."""
+    _mock_key_ok(aioclient_mock)
+    _mock_overpass(aioclient_mock)
+
+    result = await _to_shore_menu(hass, aioclient_mock)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "shore_map"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_SEA_LOCATION: {CONF_LATITUDE: SPOT_LAT - 0.01, CONF_LONGITUDE: SPOT_LON}},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SHORE_DIRECTION: 195}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SHORE_DIRECTION] == 195.0
 
 
 async def test_map_path_rejects_a_pin_on_top_of_the_break(hass, aioclient_mock):
@@ -142,6 +202,10 @@ async def test_manual_path_takes_a_bearing(hass, aioclient_mock):
         result["flow_id"], {"next_step_id": "shore_manual"}
     )
     assert result["step_id"] == "shore_manual"
+    # Prefilled from the coastline estimate: a south-facing coast.
+    assert _suggested(result["data_schema"], CONF_SHORE_DIRECTION) == pytest.approx(
+        180.0, abs=2
+    )
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SHORE_DIRECTION: 185}
