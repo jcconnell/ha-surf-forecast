@@ -10,6 +10,21 @@ import math
 
 EARTH_RADIUS_M = 6371000.0
 
+# The 16-point compass, in order from north, 22.5 degrees apart.
+COMPASS_POINTS = (
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+)
+COMPASS_NAMES = {
+    "N": "North", "NNE": "North-northeast", "NE": "Northeast",
+    "ENE": "East-northeast", "E": "East", "ESE": "East-southeast",
+    "SE": "Southeast", "SSE": "South-southeast", "S": "South",
+    "SSW": "South-southwest", "SW": "Southwest", "WSW": "West-southwest",
+    "W": "West", "WNW": "West-northwest", "NW": "Northwest",
+    "NNW": "North-northwest",
+}
+COMPASS_STEP = 360.0 / len(COMPASS_POINTS)
+
 
 def angle_difference(a: float, b: float) -> float:
     """Smallest absolute angle between two bearings, in degrees (0-180)."""
@@ -112,3 +127,20 @@ def circular_mean(
         return None, 0.0
     mean = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
     return mean, math.hypot(x, y) / total
+
+
+def compass_point(bearing: float | None) -> str | None:
+    """Nearest 16-point compass abbreviation to a bearing."""
+    if bearing is None:
+        return None
+    index = int((bearing % 360.0) / COMPASS_STEP + 0.5) % len(COMPASS_POINTS)
+    return COMPASS_POINTS[index]
+
+
+def compass_bearing(point: str) -> float:
+    """Bearing at the centre of a compass point, e.g. "SSW" -> 202.5.
+
+    The inverse of :func:`compass_point`, so a spot can be described the way
+    people actually describe it ("it faces south") instead of in degrees.
+    """
+    return COMPASS_POINTS.index(point.upper()) * COMPASS_STEP

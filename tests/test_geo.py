@@ -124,3 +124,51 @@ class TestCircularMean:
     def test_empty_and_zero_weight(self):
         assert geo.circular_mean([]) == (None, 0.0)
         assert geo.circular_mean([(180.0, 0.0)]) == (None, 0.0)
+
+
+class TestCompass:
+    """A compass point is how people describe a break; degrees are for maths."""
+
+    @pytest.mark.parametrize(
+        "point,bearing",
+        [("N", 0.0), ("NE", 45.0), ("E", 90.0), ("S", 180.0),
+         ("SSW", 202.5), ("W", 270.0), ("NNW", 337.5)],
+    )
+    def test_compass_bearing(self, point, bearing):
+        assert geo.compass_bearing(point) == bearing
+
+    def test_compass_bearing_accepts_lowercase(self):
+        assert geo.compass_bearing("ssw") == 202.5
+
+    def test_unknown_point_is_rejected(self):
+        with pytest.raises(ValueError):
+            geo.compass_bearing("NORTH")
+
+    @pytest.mark.parametrize("point", geo.COMPASS_POINTS)
+    def test_round_trips_through_degrees(self, point):
+        assert geo.compass_point(geo.compass_bearing(point)) == point
+
+    def test_every_point_has_a_full_name(self):
+        assert set(geo.COMPASS_NAMES) == set(geo.COMPASS_POINTS)
+        assert geo.COMPASS_NAMES["SSW"] == "South-southwest"
+
+    def test_rounding_error_is_within_half_a_step(self):
+        """Worst-case rounding must stay inside 11.25 degrees.
+
+        At roughly 0.3 rating points per 10 degrees, that caps the cost of
+        using a dropdown at about a third of a rating point.
+        """
+        for whole in range(0, 360):
+            point = geo.compass_point(float(whole))
+            error = geo.angle_difference(geo.compass_bearing(point), float(whole))
+            assert error <= geo.COMPASS_STEP / 2 + 1e-9
+
+    @pytest.mark.parametrize(
+        "bearing,expected",
+        [(0, "N"), (359.9, "N"), (181.5, "S"), (66.84, "ENE"), (360, "N")],
+    )
+    def test_compass_point(self, bearing, expected):
+        assert geo.compass_point(bearing) == expected
+
+    def test_compass_point_of_none_is_none(self):
+        assert geo.compass_point(None) is None

@@ -6,6 +6,7 @@ from homeassistant.const import CONF_NAME
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.surf_forecast import geo
 from custom_components.surf_forecast.coastline import OVERPASS_URL
 from custom_components.surf_forecast.const import (
     CONF_API_KEY,
@@ -18,7 +19,7 @@ from custom_components.surf_forecast.const import (
     CONF_LATITUDE,
     CONF_LOCATION,
     CONF_LONGITUDE,
-    CONF_SEA_LOCATION,
+    CONF_SHORE_COMPASS,
     CONF_SHORE_DIRECTION,
     CONF_TIDE_DATUM,
     CONF_UPDATE_INTERVAL,
@@ -97,100 +98,77 @@ async def test_user_step_leads_to_the_shore_menu(hass, aioclient_mock):
     result = await _to_shore_menu(hass, aioclient_mock)
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "shore"
-    assert set(result["menu_options"]) == {"shore_map", "shore_manual"}
+    assert set(result["menu_options"]) == {"shore_compass", "shore_manual"}
 
 
-async def test_map_step_starts_the_pin_on_the_break(hass, aioclient_mock):
-    """The selector shows one marker, so it must start somewhere meaningful.
-
-    Starting it on the break makes the gesture "drag this into the water",
-    which needs no second marker to be understood.
-    """
+async def test_compass_path_sets_the_bearing(hass, aioclient_mock):
+    """Picking South stores 180 degrees."""
     _mock_key_ok(aioclient_mock)
     _mock_overpass(aioclient_mock)
 
     result = await _to_shore_menu(hass, aioclient_mock)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"next_step_id": "shore_map"}
+        result["flow_id"], {"next_step_id": "shore_compass"}
     )
-    assert result["step_id"] == "shore_map"
-
-    suggested = _suggested(result["data_schema"], CONF_SEA_LOCATION)
-    assert suggested[CONF_LATITUDE] == pytest.approx(SPOT_LAT)
-    assert suggested[CONF_LONGITUDE] == pytest.approx(SPOT_LON)
-
-
-async def test_map_path_derives_the_bearing_then_asks_to_confirm(hass, aioclient_mock):
-    """Dragging the pin due south gives 180, shown for confirmation first."""
-    _mock_key_ok(aioclient_mock)
-    _mock_overpass(aioclient_mock)
-
-    result = await _to_shore_menu(hass, aioclient_mock)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"next_step_id": "shore_map"}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SEA_LOCATION: {CONF_LATITUDE: SPOT_LAT - 0.01, CONF_LONGITUDE: SPOT_LON}},
-    )
-
-    # Nothing is saved yet: the derived bearing comes back for a look.
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "shore_manual"
-    assert _suggested(result["data_schema"], CONF_SHORE_DIRECTION) == pytest.approx(
-        180.0, abs=0.5
-    )
-    assert "1" in result["description_placeholders"]["estimate"]
+    assert result["step_id"] == "shore_compass"
 
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SHORE_DIRECTION: 180}
+        result["flow_id"], {CONF_SHORE_COMPASS: "S"}
     )
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_SHORE_DIRECTION] == pytest.approx(180.0, abs=0.5)
-    assert result["data"][CONF_LATITUDE] == SPOT_LAT
+    assert result["data"][CONF_SHORE_DIRECTION] == 180.0
+    assert CONF_SHORE_COMPASS not in result["data"]
 
 
-async def test_the_derived_bearing_can_be_overridden_on_confirmation(
-    hass, aioclient_mock
+async def test_compass_path_is_prefilled_from_the_coastline(hass, aioclient_mock):
+    """The OSM estimate arrives as a compass point, not a raw number."""
+    _mock_key_ok(aioclient_mock)
+    _mock_overpass(aioclient_mock)  # a coast whose water lies south
+
+    result = await _to_shore_menu(hass, aioclient_mock)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "shore_compass"}
+    )
+    assert _suggested(result["data_schema"], CONF_SHORE_COMPASS) == "S"
+
+
+async def test_every_compass_point_is_offered_and_round_trips(hass, aioclient_mock):
+    """All 16 points must be selectable and map back to their own bearing."""
+    _mock_key_ok(aioclient_mock)
+    _mock_overpass(aioclient_mock)
+
+    result = await _to_shore_menu(hass, aioclient_mock)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "shore_compass"}
+    )
+    for field in result["data_schema"].schema:
+        if field == CONF_SHORE_COMPASS:
+            options = result["data_schema"].schema[field].config["options"]
+            break
+    assert [option["value"] for option in options] == list(geo.COMPASS_POINTS)
+    assert options[8]["label"] == "South (S)"
+
+
+@pytest.mark.parametrize(
+    "point,expected", [("N", 0.0), ("E", 90.0), ("S", 180.0), ("WSW", 247.5)]
+)
+async def test_compass_points_store_the_right_bearing(
+    hass, aioclient_mock, point, expected
 ):
-    """The confirm step is a real field, not a read-only summary."""
     _mock_key_ok(aioclient_mock)
     _mock_overpass(aioclient_mock)
 
     result = await _to_shore_menu(hass, aioclient_mock)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"next_step_id": "shore_map"}
+        result["flow_id"], {"next_step_id": "shore_compass"}
     )
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SEA_LOCATION: {CONF_LATITUDE: SPOT_LAT - 0.01, CONF_LONGITUDE: SPOT_LON}},
+        result["flow_id"], {CONF_SHORE_COMPASS: point}
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SHORE_DIRECTION: 195}
-    )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_SHORE_DIRECTION] == 195.0
-
-
-async def test_map_path_rejects_a_pin_on_top_of_the_break(hass, aioclient_mock):
-    """Two coincident points have no meaningful bearing between them."""
-    _mock_key_ok(aioclient_mock)
-    _mock_overpass(aioclient_mock)
-
-    result = await _to_shore_menu(hass, aioclient_mock)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"next_step_id": "shore_map"}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SEA_LOCATION: {CONF_LATITUDE: SPOT_LAT, CONF_LONGITUDE: SPOT_LON}},
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_SEA_LOCATION: "sea_point_too_close"}
+    assert result["data"][CONF_SHORE_DIRECTION] == expected
 
 
 async def test_manual_path_takes_a_bearing(hass, aioclient_mock):
