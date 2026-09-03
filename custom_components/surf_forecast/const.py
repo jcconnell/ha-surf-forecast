@@ -59,6 +59,7 @@ CONF_LOCATION = "location"
 CONF_LATITUDE = "latitude"
 CONF_LONGITUDE = "longitude"
 CONF_SHORE_DIRECTION = "shore_direction"
+CONF_SEA_LOCATION = "sea_location"
 
 CONF_UPDATE_INTERVAL = "update_interval_hours"
 CONF_FORECAST_DAYS = "forecast_days"
@@ -79,6 +80,20 @@ DEFAULT_IDEAL_MAX_HEIGHT = 2.5
 DEFAULT_GOOD_SURF_THRESHOLD = 5.0
 DEFAULT_TIDE_DATUM = "MSL"
 DEFAULT_SHORE_DIRECTION = 270.0
+
+# Picking a bearing off a map is the one setup value people cannot easily read
+# off, so the second map pin is offered instead. It has to be far enough out to
+# give a meaningful bearing.
+MIN_SEA_DISTANCE_M = 50.0
+OFFSHORE_PIN_M = 500.0
+
+# Waves cannot reach a break from inland, so a swell arriving from further than
+# this off the shore normal means the configured direction is wrong. The margin
+# past 90 degrees keeps grazing angles and refraction from raising false alarms.
+SHORE_CHECK_MAX_OFFSET = 100.0
+SHORE_CHECK_MIN_HOURS = 12
+SHORE_CHECK_MIN_COHERENCE = 0.5
+ISSUE_SHORE_DIRECTION = "shore_direction_suspect"
 
 TIDE_DATUMS = ("LAT", "MLLW", "MLW", "MSL", "MHW", "MHHW", "HAT")
 

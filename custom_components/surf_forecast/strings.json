@@ -3,12 +3,33 @@
     "step": {
       "user": {
         "title": "Add a surf spot",
-        "description": "Enter your Stormglass API key and pick the break you want to forecast. Shore direction is the compass bearing the beach faces out to sea, which is what makes offshore and onshore winds meaningful.",
+        "description": "Enter your Stormglass API key and pick the break you want to forecast. You will set which way the beach faces on the next screen.",
         "data": {
           "name": "Spot name",
           "api_key": "Stormglass API key",
-          "location": "Spot location",
-          "shore_direction": "Shore direction (bearing the beach faces)"
+          "location": "Spot location"
+        }
+      },
+      "shore": {
+        "title": "Which way does the beach face?",
+        "description": "This is the single most important setting: it is what makes a wind offshore or onshore, and getting it wrong inverts the rating.\n\n{estimate}\n\nPick how you want to set it.",
+        "menu_options": {
+          "shore_map": "Point at the water on a map (easiest)",
+          "shore_manual": "Enter the compass bearing myself"
+        }
+      },
+      "shore_map": {
+        "title": "Point at the water",
+        "description": "Drag the pin to any point in the open water in front of the break, and the bearing will be worked out for you. The pin has been placed roughly offshore already.\n\n{estimate}",
+        "data": {
+          "sea_location": "A point out in the water"
+        }
+      },
+      "shore_manual": {
+        "title": "Shore direction",
+        "description": "The compass bearing the beach faces out to sea. A beach looking west is 270, one looking south is 180.\n\n{estimate}",
+        "data": {
+          "shore_direction": "Shore direction"
         }
       },
       "reauth_confirm": {
@@ -20,7 +41,8 @@
     },
     "error": {
       "cannot_connect": "Could not reach Stormglass. Check your connection and try again.",
-      "invalid_auth": "Stormglass rejected that API key."
+      "invalid_auth": "Stormglass rejected that API key.",
+      "sea_point_too_close": "That point is too close to the break to give a reliable bearing. Move it further out to sea."
     },
     "abort": {
       "already_configured": "That spot is already set up.",
@@ -51,42 +73,116 @@
   },
   "entity": {
     "sensor": {
-      "surf_rating": { "name": "Surf rating" },
-      "surf_conditions": { "name": "Surf conditions" },
-      "wind_relation": { "name": "Wind direction relative to shore" },
-      "best_window": { "name": "Best window today" },
-      "wave_height": { "name": "Wave height" },
-      "wave_period": { "name": "Wave period" },
-      "wave_direction": { "name": "Wave direction" },
-      "swell_height": { "name": "Swell height" },
-      "swell_period": { "name": "Swell period" },
-      "swell_direction": { "name": "Swell direction" },
-      "secondary_swell_height": { "name": "Secondary swell height" },
-      "secondary_swell_period": { "name": "Secondary swell period" },
-      "secondary_swell_direction": { "name": "Secondary swell direction" },
-      "wind_wave_height": { "name": "Wind wave height" },
-      "wind_wave_period": { "name": "Wind wave period" },
-      "wind_speed": { "name": "Wind speed" },
-      "wind_gust": { "name": "Wind gust" },
-      "wind_direction": { "name": "Wind direction" },
-      "water_temperature": { "name": "Water temperature" },
-      "air_temperature": { "name": "Air temperature" },
-      "current_speed": { "name": "Current speed" },
-      "current_direction": { "name": "Current direction" },
-      "tide_state": { "name": "Tide" },
-      "next_high_tide": { "name": "Next high tide" },
-      "next_low_tide": { "name": "Next low tide" },
-      "sunrise": { "name": "Sunrise" },
-      "sunset": { "name": "Sunset" },
-      "moon_phase": { "name": "Moon phase" },
-      "moon_illumination": { "name": "Moon illumination" },
-      "requests_remaining": { "name": "API requests remaining" },
-      "last_forecast_fetch": { "name": "Last forecast fetch" }
+      "surf_rating": {
+        "name": "Surf rating"
+      },
+      "surf_conditions": {
+        "name": "Surf conditions"
+      },
+      "wind_relation": {
+        "name": "Wind direction relative to shore"
+      },
+      "best_window": {
+        "name": "Best window today"
+      },
+      "wave_height": {
+        "name": "Wave height"
+      },
+      "wave_period": {
+        "name": "Wave period"
+      },
+      "wave_direction": {
+        "name": "Wave direction"
+      },
+      "swell_height": {
+        "name": "Swell height"
+      },
+      "swell_period": {
+        "name": "Swell period"
+      },
+      "swell_direction": {
+        "name": "Swell direction"
+      },
+      "secondary_swell_height": {
+        "name": "Secondary swell height"
+      },
+      "secondary_swell_period": {
+        "name": "Secondary swell period"
+      },
+      "secondary_swell_direction": {
+        "name": "Secondary swell direction"
+      },
+      "wind_wave_height": {
+        "name": "Wind wave height"
+      },
+      "wind_wave_period": {
+        "name": "Wind wave period"
+      },
+      "wind_speed": {
+        "name": "Wind speed"
+      },
+      "wind_gust": {
+        "name": "Wind gust"
+      },
+      "wind_direction": {
+        "name": "Wind direction"
+      },
+      "water_temperature": {
+        "name": "Water temperature"
+      },
+      "air_temperature": {
+        "name": "Air temperature"
+      },
+      "current_speed": {
+        "name": "Current speed"
+      },
+      "current_direction": {
+        "name": "Current direction"
+      },
+      "tide_state": {
+        "name": "Tide"
+      },
+      "next_high_tide": {
+        "name": "Next high tide"
+      },
+      "next_low_tide": {
+        "name": "Next low tide"
+      },
+      "sunrise": {
+        "name": "Sunrise"
+      },
+      "sunset": {
+        "name": "Sunset"
+      },
+      "moon_phase": {
+        "name": "Moon phase"
+      },
+      "moon_illumination": {
+        "name": "Moon illumination"
+      },
+      "requests_remaining": {
+        "name": "API requests remaining"
+      },
+      "last_forecast_fetch": {
+        "name": "Last forecast fetch"
+      }
     },
     "binary_sensor": {
-      "good_surf": { "name": "Good surf" },
-      "offshore_wind": { "name": "Clean wind" },
-      "quota_exhausted": { "name": "API quota exhausted" }
+      "good_surf": {
+        "name": "Good surf"
+      },
+      "offshore_wind": {
+        "name": "Clean wind"
+      },
+      "quota_exhausted": {
+        "name": "API quota exhausted"
+      }
+    }
+  },
+  "issues": {
+    "shore_direction_suspect": {
+      "title": "Check the shore direction for {name}",
+      "description": "{name} is configured as facing {configured} degrees, but the forecast has swell arriving from {wave_from} degrees, which is {offset} degrees away from straight onshore. Waves cannot reach a break from inland, so the shore direction is probably wrong and the offshore/onshore wind rating will be inverted.\n\nBased on where the swell is coming from, something near {suggested} degrees is more likely. You can change it in the integration's options."
     }
   }
 }

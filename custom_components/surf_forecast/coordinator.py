@@ -22,12 +22,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from . import parse, surf
+from . import geo, parse, surf
 from .api import (
     StormglassAuthError,
     StormglassClient,
@@ -57,7 +58,11 @@ from .const import (
     DEFAULT_TIDE_DATUM,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
+    ISSUE_SHORE_DIRECTION,
     QUOTA_RESERVE,
+    SHORE_CHECK_MAX_OFFSET,
+    SHORE_CHECK_MIN_COHERENCE,
+    SHORE_CHECK_MIN_HOURS,
     STORAGE_KEY,
     STORAGE_VERSION,
     TIDE_CACHE_HOURS,
@@ -89,6 +94,7 @@ class SurfData:
     requests_remaining: int | None = None
     daily_quota: int | None = None
     station: dict[str, Any] | None = None
+    shore_check: dict[str, Any] = field(default_factory=dict)
     last_weather_fetch: datetime | None = None
     quota_blocked: bool = False
 
@@ -375,6 +381,7 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
             await self._async_save_cache()
 
         data = self._build_data()
+        self._async_update_shore_issue(data)
 
         if errors and not parse.covers(data.hours, now):
             # Nothing usable cached either, so this really is a failure.
@@ -419,9 +426,70 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
             forecast=self._forecast_summary(hours, now),
             requests_remaining=self.client.requests_remaining,
             daily_quota=self.client.daily_quota,
+            shore_check=self._shore_check(hours),
             station=_station(self._tide_payload),
             last_weather_fetch=self._weather_fetched,
             quota_blocked=self._quota_blocked,
+        )
+
+    def _shore_check(self, hours: list[dict[str, Any]]) -> dict[str, Any]:
+        """Sanity check the configured shore direction against the swell.
+
+        Waves cannot reach a break from inland, so if the forecast has swell
+        arriving consistently from behind the beach, the shore direction is
+        almost certainly wrong. This uses data already fetched, so it costs
+        nothing.
+        """
+        samples: list[tuple[float, float]] = []
+        for hour in hours:
+            direction = hour.get("waveDirection", hour.get("swellDirection"))
+            if direction is not None:
+                samples.append((direction, 1.0))
+        if len(samples) < SHORE_CHECK_MIN_HOURS:
+            return {}
+
+        mean, coherence = geo.circular_mean(samples)
+        if mean is None:
+            return {}
+
+        offset = geo.angle_difference(mean, self.shore_direction)
+        return {
+            "mean_wave_from": round(mean, 1),
+            "coherence": round(coherence, 2),
+            "offset_from_onshore": round(offset, 1),
+            "hours": len(samples),
+            # Beyond 90 degrees the swell would have crossed land to arrive.
+            "suspect": (
+                offset > SHORE_CHECK_MAX_OFFSET
+                and coherence >= SHORE_CHECK_MIN_COHERENCE
+            ),
+        }
+
+    @callback
+    def _async_update_shore_issue(self, data: SurfData) -> None:
+        """Raise or clear the repair issue for an implausible shore direction."""
+        issue_id = f"{ISSUE_SHORE_DIRECTION}_{self.entry.entry_id}"
+        check = data.shore_check
+
+        if not check.get("suspect"):
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+
+        likely = round(check["mean_wave_from"]) % 360
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_SHORE_DIRECTION,
+            translation_placeholders={
+                "name": self.entry.title,
+                "configured": f"{self.shore_direction:.0f}",
+                "wave_from": f"{check['mean_wave_from']:.0f}",
+                "offset": f"{check['offset_from_onshore']:.0f}",
+                "suggested": f"{likely}",
+            },
         )
 
     def _rate(self, hour: dict[str, Any] | None) -> dict[str, Any]:

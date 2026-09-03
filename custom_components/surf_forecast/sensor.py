@@ -116,6 +116,12 @@ SENSORS: tuple[SurfSensorDescription, ...] = (
         translation_key="wind_relation",
         icon="mdi:weather-windy",
         value_fn=lambda data: data.wind_relation,
+        # The shore-direction sanity check belongs with the sensor it affects.
+        attr_fn=lambda data: {
+            "mean_wave_from": data.shore_check.get("mean_wave_from"),
+            "offset_from_onshore": data.shore_check.get("offset_from_onshore"),
+            "shore_direction_suspect": data.shore_check.get("suspect"),
+        },
     ),
     SurfSensorDescription(
         key="best_window",
