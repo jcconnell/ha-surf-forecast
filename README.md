@@ -65,25 +65,22 @@ west-facing California beach is `270`, a south-facing one is `180`. An offshore
 wind then arrives from the opposite bearing. **Get this wrong and the wind
 scoring inverts**, so setup offers three ways to get it right.
 
-**1. Drag a pin into the water.** Setup shows a map centred on your break with
-the pin sitting on it. Drag that pin straight out into the open water and the
-bearing is computed from where it lands, then shown back to you as a compass
-direction to confirm before anything is saved.
+**1. Pick a compass direction.** Setup asks which way the beach looks out to
+sea and offers the sixteen compass points: a south-facing break is *South*, a
+west-facing one is *West*. That is how people describe a spot out loud, and it
+is precise enough — 22.5 degree steps mean at most 11 degrees of error, which
+costs about a third of a rating point. The mistake that actually matters is
+being 80 degrees out, which a dropdown makes hard to do.
 
-Home Assistant's map selector only ever shows one marker, so it cannot leave a
-second pin behind on the break. That is why the pin starts *on* the break: the
-gesture is "drag this into the sea", which needs no second marker to make
-sense, and the confirmation screen is what tells you it came out right.
+**2. A coastline estimate** prefills that dropdown. OSM draws
+`natural=coastline` with land on the left and water on the right, so a
+segment's seaward normal is its bearing plus 90 degrees. Taking the nearest
+segment is unreliable near harbours and jetties — exactly where surf spots are
+— so this takes a length-weighted circular mean of nearby segments, ignores
+anything under 50 m, and reports how well they agreed. If they do not agree, no
+estimate is offered rather than a confident wrong one.
 
-**2. A coastline estimate.** Both setup paths are prefilled from OpenStreetMap
-coastline data. OSM draws `natural=coastline` with land on the left and water
-on the right, so a segment's seaward normal is its bearing plus 90 degrees.
-Taking the nearest segment is unreliable near harbours and jetties — exactly
-where surf spots are — so this takes a length-weighted circular mean of nearby
-segments, ignores anything under 50 m, and reports how well they agreed. If
-they do not agree, no estimate is offered rather than a confident wrong one.
-
-**3. Enter the bearing** directly, if you already know it.
+**3. Enter an exact bearing** instead, if you already know it.
 
 ### The integration checks your answer
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 
 # Re-exported so callers of this module keep a single scoring entry point.
-from .geo import angle_difference  # noqa: F401
+from .geo import angle_difference, compass_point  # noqa: F401
 
 # Below this the spot is not rideable at all.
 MIN_RIDEABLE_HEIGHT = 0.3
@@ -66,22 +66,9 @@ WIND_BANDS = (
     (180.01, WIND_ONSHORE),
 )
 
-COMPASS_POINTS = (
-    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
-)
-
-
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     """Constrain value to the inclusive range [low, high]."""
     return max(low, min(high, value))
-
-
-def compass_point(bearing: float | None) -> str | None:
-    """Convert a bearing in degrees to a 16-point compass abbreviation."""
-    if bearing is None:
-        return None
-    return COMPASS_POINTS[int((bearing % 360.0) / 22.5 + 0.5) % 16]
 
 
 def offshore_offset(wind_from: float, shore_direction: float) -> float:

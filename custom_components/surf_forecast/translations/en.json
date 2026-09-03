@@ -12,22 +12,22 @@
       },
       "shore": {
         "title": "Which way does the beach face?",
-        "description": "This is the single most important setting: it is what makes a wind offshore or onshore, and getting it wrong inverts the rating.\n\n{estimate}\n\nPick how you want to set it.",
+        "description": "This is the most important setting here: it is what makes a wind offshore or onshore, and getting it wrong inverts the rating.\n\n{estimate}",
         "menu_options": {
-          "shore_map": "Drag a pin into the water (easiest)",
-          "shore_manual": "Enter the compass bearing myself"
+          "shore_compass": "Pick a compass direction",
+          "shore_manual": "Enter an exact bearing"
         }
       },
-      "shore_map": {
-        "title": "Drag the pin into the water",
-        "description": "The map is centred on your break, with the pin sitting on it.\n\n**Drag the pin straight out into the open water** in front of the break — any distance beyond about 50 m — and the direction the beach faces is worked out from where it lands. You will see the result as a compass bearing on the next screen before anything is saved.\n\nThe map only shows one marker, so it will not leave a pin behind on the break itself.\n\n{estimate}",
+      "shore_compass": {
+        "title": "Which way does the beach look out to sea?",
+        "description": "Pick the direction you would face standing on the beach looking at the water. A south-facing break is South; a west-facing one is West.\n\n{estimate}",
         "data": {
-          "sea_location": "Drag this into the water"
+          "shore_compass": "The beach looks out towards"
         }
       },
       "shore_manual": {
-        "title": "Confirm the shore direction",
-        "description": "{estimate}\n\nThe bearing is the way the beach looks out to sea: 180 is south-facing, 270 is west-facing.",
+        "title": "Exact shore direction",
+        "description": "The compass bearing the beach faces out to sea, in degrees. South is 180, west is 270.\n\n{estimate}",
         "data": {
           "shore_direction": "Shore direction"
         }
@@ -41,8 +41,7 @@
     },
     "error": {
       "cannot_connect": "Could not reach Stormglass. Check your connection and try again.",
-      "invalid_auth": "Stormglass rejected that API key.",
-      "sea_point_too_close": "The pin is still on the break. Drag it out into the water, at least 50 m away, so there is a direction to measure."
+      "invalid_auth": "Stormglass rejected that API key."
     },
     "abort": {
       "already_configured": "That spot is already set up.",

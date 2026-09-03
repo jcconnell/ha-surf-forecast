@@ -35,7 +35,7 @@ from .const import (
     CONF_LATITUDE,
     CONF_LOCATION,
     CONF_LONGITUDE,
-    CONF_SEA_LOCATION,
+    CONF_SHORE_COMPASS,
     CONF_SHORE_DIRECTION,
     CONF_TIDE_DATUM,
     CONF_UPDATE_INTERVAL,
@@ -47,8 +47,6 @@ from .const import (
     DEFAULT_TIDE_DATUM,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
-    MIN_SEA_DISTANCE_M,
-    OFFSHORE_PIN_M,
     TIDE_DATUMS,
 )
 
@@ -64,8 +62,7 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
         """Initialise per-flow state."""
         self._spot: dict[str, Any] = {}
         self._estimate: coastline.ShoreEstimate | None = None
-        self._derived: float | None = None
-        self._sea_distance: float | None = None
+
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -120,65 +117,47 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
         """Offer the two ways of setting which way the beach faces."""
         return self.async_show_menu(
             step_id="shore",
-            menu_options=["shore_map", "shore_manual"],
+            menu_options=["shore_compass", "shore_manual"],
             description_placeholders={"estimate": self._estimate_text()},
         )
 
-    async def async_step_shore_map(
+    async def async_step_shore_compass(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Derive the shore direction by dragging the pin out into the water.
+        """Take the shore direction as a compass point.
 
-        Home Assistant's location selector shows a single marker, so the pin
-        starts on the break itself: the gesture is "drag this from the spot
-        into the sea", which needs no second marker to make sense. The result
-        is then shown as a bearing for confirmation.
+        This is how people actually describe a break -- "it faces south" --
+        and 22.5 degree granularity is far finer than the setting needs: the
+        rating moves about 0.3 per 10 degrees, so the worst case rounding
+        costs about a third of a point.
         """
-        errors: dict[str, str] = {}
-        spot_lat = self._spot[CONF_LATITUDE]
-        spot_lon = self._spot[CONF_LONGITUDE]
-
         if user_input is not None:
-            sea = user_input[CONF_SEA_LOCATION]
-            sea_lat, sea_lon = sea[CONF_LATITUDE], sea[CONF_LONGITUDE]
-            distance = geo.distance_m(spot_lat, spot_lon, sea_lat, sea_lon)
-            if distance < MIN_SEA_DISTANCE_M:
-                errors[CONF_SEA_LOCATION] = "sea_point_too_close"
-            else:
-                self._derived = round(
-                    geo.initial_bearing(spot_lat, spot_lon, sea_lat, sea_lon), 1
-                )
-                self._sea_distance = distance
-                return await self.async_step_shore_manual()
+            return self._create_entry(
+                geo.compass_bearing(user_input[CONF_SHORE_COMPASS])
+            )
 
+        suggested = geo.compass_point(
+            self._estimate.bearing if self._estimate else DEFAULT_SHORE_DIRECTION
+        )
         return self.async_show_form(
-            step_id="shore_map",
+            step_id="shore_compass",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema({vol.Required(CONF_SEA_LOCATION): selector.LocationSelector()}),
-                {CONF_SEA_LOCATION: {CONF_LATITUDE: spot_lat, CONF_LONGITUDE: spot_lon}},
+                vol.Schema({vol.Required(CONF_SHORE_COMPASS): _compass_selector()}),
+                {CONF_SHORE_COMPASS: suggested},
             ),
-            errors=errors,
             description_placeholders={"estimate": self._estimate_text()},
         )
 
     async def async_step_shore_manual(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirm or type the shore direction.
-
-        Reached either straight from the menu, or after the map step with the
-        derived bearing prefilled so it can be sanity checked in words before
-        being committed.
-        """
+        """Take the shore direction as an exact bearing."""
         if user_input is not None:
             return self._create_entry(float(user_input[CONF_SHORE_DIRECTION]))
 
-        if self._derived is not None:
-            suggested = self._derived
-        elif self._estimate is not None:
-            suggested = self._estimate.bearing
-        else:
-            suggested = DEFAULT_SHORE_DIRECTION
+        suggested = (
+            self._estimate.bearing if self._estimate else DEFAULT_SHORE_DIRECTION
+        )
 
         return self.async_show_form(
             step_id="shore_manual",
@@ -186,7 +165,7 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Schema({vol.Required(CONF_SHORE_DIRECTION): _bearing_selector()}),
                 {CONF_SHORE_DIRECTION: suggested},
             ),
-            description_placeholders={"estimate": self._source_text(suggested)},
+            description_placeholders={"estimate": self._estimate_text()},
         )
 
     def _create_entry(self, shore_direction: float) -> ConfigFlowResult:
@@ -195,20 +174,6 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
             title=self._spot[CONF_NAME],
             data={**self._spot, CONF_SHORE_DIRECTION: shore_direction},
         )
-
-    def _source_text(self, suggested: float) -> str:
-        """Explain, in words, where the prefilled bearing came from."""
-        heading = f"{suggested:.0f} degrees ({_compass(suggested)})"
-        if self._derived is not None:
-            metres = f"{self._sea_distance:.0f}" if self._sea_distance else "?"
-            return (
-                f"Your map pin puts the water {metres} m away on a bearing of "
-                f"{heading}, so that is the direction the beach faces. Check it "
-                f"reads the way you expect, then save it or adjust it."
-            )
-        if self._estimate is not None:
-            return f"Prefilled from the coastline estimate: {heading}. {self._estimate_text()}"
-        return f"No estimate was available, so this is only a placeholder ({heading})."
 
     def _estimate_text(self) -> str:
         """Human readable summary of the coastline estimate, for the forms."""
@@ -220,7 +185,7 @@ class SurfForecastConfigFlow(ConfigFlow, domain=DOMAIN):
         confidence = "looks reliable" if self._estimate.confident else "is rough"
         return (
             f"OpenStreetMap suggests about {self._estimate.bearing:.0f} degrees "
-            f"({_compass(self._estimate.bearing)}); this estimate {confidence} "
+            f"({geo.compass_point(self._estimate.bearing)}); this estimate {confidence} "
             f"(agreement {self._estimate.coherence:.2f} across "
             f"{self._estimate.segments} coastline segments)."
         )
@@ -308,6 +273,22 @@ class SurfForecastOptionsFlow(OptionsFlow):
         )
 
 
+def _compass_selector() -> selector.SelectSelector:
+    """A 16-point compass dropdown, labelled in full."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(
+                    value=point,
+                    label=f"{geo.COMPASS_NAMES[point]} ({point})",
+                )
+                for point in geo.COMPASS_POINTS
+            ],
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
 def _bearing_selector() -> selector.NumberSelector:
     """A 0-359 degree bearing input."""
     return selector.NumberSelector(
@@ -319,15 +300,6 @@ def _bearing_selector() -> selector.NumberSelector:
             mode=selector.NumberSelectorMode.BOX,
         )
     )
-
-
-def _compass(bearing: float) -> str:
-    """16-point compass abbreviation, for readable form text."""
-    points = (
-        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
-    )
-    return points[int((bearing % 360.0) / 22.5 + 0.5) % 16]
 
 
 def _user_schema() -> vol.Schema:
