@@ -184,3 +184,48 @@ class TestConditionsText:
 
     def test_unknown_rating_has_no_text(self):
         assert surf.conditions_text(None) is None
+
+
+class TestSurfAtBreak:
+    KEWALOS = {
+        "waveHeight": 1.45,
+        "swellHeight": 0.79,
+        "swellPeriod": 12.7,
+        "swellDirection": 191.0,
+        "secondarySwellHeight": 0.41,
+        "secondarySwellPeriod": 5.7,
+        "secondarySwellDirection": 147.0,
+        "windWaveHeight": 1.11,
+        "windWavePeriod": 3.9,
+        "windWaveDirection": 64.0,
+    }
+
+    def test_wind_sea_behind_the_beach_is_left_out(self):
+        height, period = surf.surf_at_break(self.KEWALOS, 217.0)
+        assert height == pytest.approx(0.89, abs=0.01)
+        assert period == 12.7
+
+    def test_everything_counts_when_it_all_arrives_from_seaward(self):
+        height, _ = surf.surf_at_break(self.KEWALOS, 120.0)
+        assert height == pytest.approx(
+            (0.79**2 + 0.41**2 + 1.11**2) ** 0.5, abs=0.01
+        )
+
+    def test_period_is_the_dominant_reaching_component(self):
+        # Facing east, only the wind sea and secondary swell arrive.
+        _, period = surf.surf_at_break(self.KEWALOS, 90.0)
+        assert period == 3.9
+
+    def test_nothing_reaching_the_break_is_flat(self):
+        height, _ = surf.surf_at_break(self.KEWALOS, 300.0)
+        assert height == 0.0
+
+    def test_a_component_without_a_direction_is_kept(self):
+        height, _ = surf.surf_at_break({"swellHeight": 1.2, "swellPeriod": 11.0}, 0.0)
+        assert height == 1.2
+
+    def test_falls_back_to_the_combined_sea_without_components(self):
+        assert surf.surf_at_break({"waveHeight": 1.8, "wavePeriod": 9.0}, 270.0) == (
+            1.8,
+            9.0,
+        )

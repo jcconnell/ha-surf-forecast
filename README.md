@@ -43,7 +43,13 @@ Three questions, asked in the order a surfer asks them.
 1. **Is there enough swell?** Wave height is scored against the ideal band you
    configure (1.0–2.5 m by default). Below 0.3 m scores zero; well above the
    band decays toward a floor rather than to zero, because oversized surf is
-   still surf for somebody.
+   still surf for somebody. Only swell that can reach the break counts:
+   components arriving from more than 100 degrees off the shore direction
+   would have to cross land, so they are left out. On a lee-side break this
+   matters a lot — at a south-facing Hawaiian spot, trade-wind chop from the
+   east-northeast can double the open-water wave height without ever
+   touching the beach. The height actually used is on the rating as
+   `surf_height_m`.
 2. **Does it have power?** Swell period from 5 s (wind slop) to 15 s
    (groundswell).
 3. **Is the wind wrecking it?** Calm air is ideal regardless of direction. As

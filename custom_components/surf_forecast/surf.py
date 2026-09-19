@@ -66,6 +66,19 @@ WIND_BANDS = (
     (180.01, WIND_ONSHORE),
 )
 
+# A wave component arriving from further than this off the shore normal has to
+# cross land to reach the break. The margin past 90 degrees allows for
+# refraction around the ends of a beach.
+SWELL_WINDOW = 100.0
+
+# Stormglass's partitions of the sea state: (height, period, direction) keys.
+WAVE_COMPONENTS = (
+    ("swellHeight", "swellPeriod", "swellDirection"),
+    ("secondarySwellHeight", "secondarySwellPeriod", "secondarySwellDirection"),
+    ("windWaveHeight", "windWavePeriod", "windWaveDirection"),
+)
+
+
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     """Constrain value to the inclusive range [low, high]."""
     return max(low, min(high, value))
@@ -79,6 +92,50 @@ def offshore_offset(wind_from: float, shore_direction: float) -> float:
     offshore through 180 for dead onshore.
     """
     return angle_difference(wind_from, (shore_direction + 180.0) % 360.0)
+
+
+def surf_at_break(
+    hour: dict, shore_direction: float
+) -> tuple[float | None, float | None]:
+    """Height and period of the sea that can actually reach the break.
+
+    Stormglass's ``waveHeight`` is the whole open-water sea state at the grid
+    point, including local wind chop running along or away from the coast.
+    On a south-facing Hawaiian break the trade-wind sea from the east-northeast
+    can double that figure while never touching the beach. So combine only the
+    components arriving from seaward, as significant heights add: the root of
+    the summed squares. The period is the dominant such component's.
+
+    Falls back to ``waveHeight`` and ``swellPeriod`` when the forecast has no
+    component breakdown to filter.
+    """
+    energy = 0.0
+    dominant: tuple[float, float | None] | None = None
+    have_components = False
+    for height_key, period_key, direction_key in WAVE_COMPONENTS:
+        height = hour.get(height_key)
+        if height is None:
+            continue
+        have_components = True
+        direction = hour.get(direction_key)
+        if (
+            direction is not None
+            and angle_difference(direction, shore_direction) > SWELL_WINDOW
+        ):
+            continue
+        energy += height * height
+        if dominant is None or height > dominant[0]:
+            dominant = (height, hour.get(period_key))
+
+    if not have_components:
+        return hour.get("waveHeight"), hour.get("swellPeriod") or hour.get(
+            "wavePeriod"
+        )
+    if dominant is None:
+        # Everything out there is heading the wrong way: the break is flat.
+        return 0.0, None
+    period = dominant[1] or hour.get("swellPeriod") or hour.get("wavePeriod")
+    return round(math.sqrt(energy), 2), period
 
 
 def wind_relation(
