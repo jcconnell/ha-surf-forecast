@@ -252,7 +252,10 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
                 # would mark the coordinator successful again and hide a
                 # genuine fetch failure, so leave the state alone.
                 return
-            self.async_set_updated_data(data)
+            # Not async_set_updated_data: that restarts the refresh timer, and
+            # firing it every hour would push the network fetch back forever.
+            self.data = data
+            self.async_update_listeners()
 
         self._unsub_hourly = async_track_time_change(
             self.hass, _recompute, minute=0, second=5
@@ -440,11 +443,14 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
         almost certainly wrong. This uses data already fetched, so it costs
         nothing.
         """
+        # Swell only. The combined waveDirection includes local wind chop,
+        # which at a lee-side break blows straight out from behind the beach
+        # and would condemn a correct shore direction.
         samples: list[tuple[float, float]] = []
         for hour in hours:
-            direction = hour.get("waveDirection", hour.get("swellDirection"))
+            direction = hour.get("swellDirection")
             if direction is not None:
-                samples.append((direction, 1.0))
+                samples.append((direction, hour.get("swellHeight") or 1.0))
         if len(samples) < SHORE_CHECK_MIN_HOURS:
             return {}
 
@@ -496,15 +502,19 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
         """Score one forecast hour."""
         if not hour:
             return {}
-        return surf.surf_rating(
-            wave_height=hour.get("waveHeight"),
-            swell_period=hour.get("swellPeriod") or hour.get("wavePeriod"),
+        height, period = surf.surf_at_break(hour, self.shore_direction)
+        rating = surf.surf_rating(
+            wave_height=height,
+            swell_period=period,
             wind_speed=hour.get("windSpeed"),
             wind_from=hour.get("windDirection"),
             shore_direction=self.shore_direction,
             ideal_min=self.ideal_min_height,
             ideal_max=self.ideal_max_height,
         )
+        rating["surf_height"] = height
+        rating["surf_period"] = period
+        return rating
 
     def _forecast_summary(
         self,
@@ -525,7 +535,8 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
                     "rating": rating.get("rating"),
                     "conditions": surf.conditions_text(rating.get("rating")),
                     "wave_height": hour.get("waveHeight"),
-                    "swell_period": hour.get("swellPeriod"),
+                    "surf_height": rating.get("surf_height"),
+                    "swell_period": rating.get("surf_period"),
                     "wind_speed": hour.get("windSpeed"),
                     "wind_relation": surf.wind_relation(
                         hour.get("windDirection"),
@@ -563,7 +574,7 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
                     "time": moment,
                     "rating": score,
                     "conditions": surf.conditions_text(score),
-                    "wave_height": hour.get("waveHeight"),
+                    "wave_height": rating.get("surf_height"),
                 }
         return best
 

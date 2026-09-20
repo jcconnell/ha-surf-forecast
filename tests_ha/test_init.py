@@ -313,7 +313,8 @@ def _payload_with_wave_direction(now, direction):
             {
                 "time": (now + timedelta(hours=offset)).isoformat(),
                 "waveHeight": {"sg": 1.5},
-                "waveDirection": {"sg": direction},
+                "swellHeight": {"sg": 1.5},
+                "swellDirection": {"sg": direction},
                 "swellPeriod": {"sg": 12.0},
                 "windSpeed": {"sg": 3.0},
                 "windDirection": {"sg": 90.0},
@@ -327,10 +328,8 @@ def _payload_with_wave_direction(now, direction):
 async def test_swell_arriving_from_inland_raises_a_repair_issue(
     hass, aioclient_mock, freezer, now, tide_payload, astronomy_payload
 ):
-    """The real Kewalos mistake: a south-facing break configured as west-facing.
-
-    Waves cannot cross land to reach a break, so a swell persistently arriving
-    from behind the beach proves the shore direction is wrong.
+    """Waves cannot cross land to reach a break, so a swell persistently
+    arriving from behind the beach proves the shore direction is wrong.
     """
     # Shore says 270 (west), but the swell arrives from 116 (ESE) all week.
     aioclient_mock.get(ENDPOINT_WEATHER, json=_payload_with_wave_direction(now, 116.0))
@@ -389,3 +388,88 @@ async def test_a_grazing_swell_angle_does_not_raise_a_false_alarm(
         registry.async_get_issue(DOMAIN, f"shore_direction_suspect_{entry.entry_id}")
         is None
     )
+
+
+async def test_trade_wind_chop_does_not_condemn_a_south_facing_break(
+    hass, aioclient_mock, freezer, now, tide_payload, astronomy_payload
+):
+    """The real Kewalos case: groundswell from the south, trade chop from ENE.
+
+    Stormglass's combined waveDirection follows the bigger wind sea, so it
+    points at land. The swell itself arrives from seaward, and the rating must
+    be sized on that, not on chop blowing out to sea behind the break.
+    """
+    hours = [
+        {
+            "time": (now + timedelta(hours=offset)).isoformat(),
+            "waveHeight": {"sg": 1.45},
+            "waveDirection": {"sg": 109.0},
+            "swellHeight": {"sg": 0.79},
+            "swellPeriod": {"sg": 12.7},
+            "swellDirection": {"sg": 191.0},
+            "secondarySwellHeight": {"sg": 0.41},
+            "secondarySwellPeriod": {"sg": 5.7},
+            "secondarySwellDirection": {"sg": 147.0},
+            "windWaveHeight": {"sg": 1.11},
+            "windWavePeriod": {"sg": 3.9},
+            "windWaveDirection": {"sg": 64.0},
+            "windSpeed": {"sg": 9.8},
+            "windDirection": {"sg": 68.0},
+        }
+        for offset in range(48)
+    ]
+    aioclient_mock.get(
+        ENDPOINT_WEATHER,
+        json={"hours": hours, "meta": {"dailyQuota": 10, "requestCount": 1}},
+    )
+    aioclient_mock.get(ENDPOINT_TIDE_EXTREMES, json=tide_payload)
+    aioclient_mock.get(ENDPOINT_ASTRONOMY, json=astronomy_payload)
+    freezer.move_to(now)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Test Beach",
+        data={**ENTRY_DATA, CONF_SHORE_DIRECTION: 217.0},
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = ir.async_get(hass)
+    assert (
+        registry.async_get_issue(DOMAIN, f"shore_direction_suspect_{entry.entry_id}")
+        is None
+    )
+    rating = hass.states.get("sensor.test_beach_surf_rating")
+    # Swell and secondary swell only: sqrt(0.79^2 + 0.41^2).
+    assert rating.attributes["surf_height_m"] == pytest.approx(0.89, abs=0.01)
+
+
+async def test_hourly_recompute_does_not_postpone_the_forecast_fetch(
+    hass, aioclient_mock, freezer, now, weather_payload, tide_payload, astronomy_payload
+):
+    """Recomputing every hour must not keep resetting the network refresh timer.
+
+    It did: async_set_updated_data restarts the coordinator's interval, so an
+    hourly recompute meant the six hourly fetch never came due and a spot
+    served one forecast for days.
+    """
+    _mock_all(aioclient_mock, weather_payload, tide_payload, astronomy_payload)
+    freezer.move_to(now)
+    await _setup(hass)
+
+    def weather_calls():
+        return sum(
+            1
+            for call in aioclient_mock.mock_calls
+            if str(call[1]).startswith(ENDPOINT_WEATHER)
+        )
+
+    assert weather_calls() == 1
+
+    for hour in range(1, 8):
+        freezer.move_to(now + timedelta(hours=hour, seconds=10))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+    assert weather_calls() == 2

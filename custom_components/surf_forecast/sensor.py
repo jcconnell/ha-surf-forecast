@@ -101,6 +101,7 @@ SENSORS: tuple[SurfSensorDescription, ...] = (
             "height_score": data.rating.get("height_score"),
             "period_score": data.rating.get("period_score"),
             "wind_score": data.rating.get("wind_score"),
+            "surf_height_m": data.rating.get("surf_height"),
             "conditions": data.conditions,
             "forecast": data.forecast,
         },

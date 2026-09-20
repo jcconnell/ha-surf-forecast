@@ -28,7 +28,23 @@ OVERSIZED_FLOOR = 0.15
 # Wind speeds in m/s.
 GLASSY_WIND = 1.5
 FULL_WIND_INFLUENCE = 10.0
-STRONG_OFFSHORE = 9.0
+# A wind straight off the land grooms the surface however hard it blows, right
+# up to the point where it stops you paddling into anything. Measured forecasts
+# top out around 11 m/s, so where that point sits is judgement, not data.
+GALE_WIND = 15.0
+
+# How much of the surface survives, by how far the wind is off dead offshore.
+# Anchored on the band edges above: inside the offshore band direction barely
+# matters, and quality falls away fastest through cross-offshore and cross-shore,
+# which is where surf-forecast.com's own ratings collapse once the wind gets up.
+DIRECTION_QUALITY = (
+    (0.0, 1.0),
+    (30.0, 0.9),
+    (75.0, 0.5),
+    (105.0, 0.3),
+    (150.0, 0.1),
+    (180.0, 0.0),
+)
 
 # Swell periods in seconds.
 MIN_PERIOD = 5.0
@@ -66,6 +82,19 @@ WIND_BANDS = (
     (180.01, WIND_ONSHORE),
 )
 
+# A wave component arriving from further than this off the shore normal has to
+# cross land to reach the break. The margin past 90 degrees allows for
+# refraction around the ends of a beach.
+SWELL_WINDOW = 100.0
+
+# Stormglass's partitions of the sea state: (height, period, direction) keys.
+WAVE_COMPONENTS = (
+    ("swellHeight", "swellPeriod", "swellDirection"),
+    ("secondarySwellHeight", "secondarySwellPeriod", "secondarySwellDirection"),
+    ("windWaveHeight", "windWavePeriod", "windWaveDirection"),
+)
+
+
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     """Constrain value to the inclusive range [low, high]."""
     return max(low, min(high, value))
@@ -79,6 +108,50 @@ def offshore_offset(wind_from: float, shore_direction: float) -> float:
     offshore through 180 for dead onshore.
     """
     return angle_difference(wind_from, (shore_direction + 180.0) % 360.0)
+
+
+def surf_at_break(
+    hour: dict, shore_direction: float
+) -> tuple[float | None, float | None]:
+    """Height and period of the sea that can actually reach the break.
+
+    Stormglass's ``waveHeight`` is the whole open-water sea state at the grid
+    point, including local wind chop running along or away from the coast.
+    On a south-facing Hawaiian break the trade-wind sea from the east-northeast
+    can double that figure while never touching the beach. So combine only the
+    components arriving from seaward, as significant heights add: the root of
+    the summed squares. The period is the dominant such component's.
+
+    Falls back to ``waveHeight`` and ``swellPeriod`` when the forecast has no
+    component breakdown to filter.
+    """
+    energy = 0.0
+    dominant: tuple[float, float | None] | None = None
+    have_components = False
+    for height_key, period_key, direction_key in WAVE_COMPONENTS:
+        height = hour.get(height_key)
+        if height is None:
+            continue
+        have_components = True
+        direction = hour.get(direction_key)
+        if (
+            direction is not None
+            and angle_difference(direction, shore_direction) > SWELL_WINDOW
+        ):
+            continue
+        energy += height * height
+        if dominant is None or height > dominant[0]:
+            dominant = (height, hour.get(period_key))
+
+    if not have_components:
+        return hour.get("waveHeight"), hour.get("swellPeriod") or hour.get(
+            "wavePeriod"
+        )
+    if dominant is None:
+        # Everything out there is heading the wrong way: the break is flat.
+        return 0.0, None
+    period = dominant[1] or hour.get("swellPeriod") or hour.get("wavePeriod")
+    return round(math.sqrt(energy), 2), period
 
 
 def wind_relation(
@@ -96,6 +169,18 @@ def wind_relation(
         if offset < limit:
             return label
     return WIND_ONSHORE
+
+
+def direction_quality(offset: float) -> float:
+    """How clean the surface stays at this angle off dead offshore, 0 to 1."""
+    previous_angle, previous_value = DIRECTION_QUALITY[0]
+    for angle, value in DIRECTION_QUALITY[1:]:
+        if offset <= angle:
+            span = angle - previous_angle
+            fraction = (offset - previous_angle) / span if span else 0.0
+            return previous_value + (value - previous_value) * fraction
+        previous_angle, previous_value = angle, value
+    return DIRECTION_QUALITY[-1][1]
 
 
 def height_score(
@@ -142,8 +227,10 @@ def wind_score(
     """Score how much the wind helps or ruins the surface, 0 to 1.
 
     Calm air is ideal whatever its direction. As the wind builds, direction
-    matters more; a hard offshore is penalised too, because it holds waves up
-    and eventually stops them breaking cleanly.
+    matters more, and anything off dead offshore degrades quickly: at
+    surf-forecast.com a cross-offshore break loses half its rating when the
+    wind gets up, while a dead offshore one loses nothing. Only a gale is
+    penalised from offshore, because it stops waves breaking cleanly.
     """
     if wind_speed is None:
         return 0.5
@@ -153,16 +240,15 @@ def wind_score(
         return 0.5
 
     offset = offshore_offset(wind_from, shore_direction)
-    # 1.0 dead offshore, 0.5 cross-shore, 0.0 dead onshore.
-    direction_quality = (math.cos(math.radians(offset)) + 1.0) / 2.0
+    quality = direction_quality(offset)
 
     influence = clamp(
         (wind_speed - GLASSY_WIND) / (FULL_WIND_INFLUENCE - GLASSY_WIND)
     )
-    score = 1.0 - influence * (1.0 - direction_quality)
+    score = 1.0 - influence * (1.0 - quality)
 
-    if wind_speed > STRONG_OFFSHORE and direction_quality > 0.5:
-        score *= clamp(1.0 - (wind_speed - STRONG_OFFSHORE) / 12.0, 0.4, 1.0)
+    if wind_speed > GALE_WIND and quality > 0.5:
+        score *= clamp(1.0 - (wind_speed - GALE_WIND) / 12.0, 0.4, 1.0)
 
     return clamp(score)
 
