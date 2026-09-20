@@ -54,7 +54,12 @@ Three questions, asked in the order a surfer asks them.
    (groundswell).
 3. **Is the wind wrecking it?** Calm air is ideal regardless of direction. As
    the wind builds, direction matters more, scored from the angle between the
-   wind and a dead-offshore wind. A howling offshore is penalised too.
+   wind and a dead-offshore wind. The falloff is steepest through
+   cross-offshore and cross-shore, which is where surf-forecast.com's own
+   ratings collapse once the wind gets up: across 207 of their forecast hours,
+   a cross-offshore break loses half its rating when the wind passes 5 m/s
+   while a dead-offshore one loses none. Only a gale is penalised from
+   offshore, because it stops waves breaking cleanly.
 
 Size gates the result, so a glassy long-period forecast on a flat ocean still
 rates zero:

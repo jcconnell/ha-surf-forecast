@@ -111,6 +111,34 @@ class TestWindScore:
         strong = surf.wind_score(9.0, 270, WEST_FACING)
         assert light > strong
 
+    def test_strong_wind_barely_touches_a_dead_offshore_day(self):
+        """surf-forecast.com rates dead offshore hours the same light or strong."""
+        light = surf.wind_score(3.0, 90, WEST_FACING)
+        strong = surf.wind_score(10.0, 90, WEST_FACING)
+        assert strong == pytest.approx(light, abs=0.01)
+
+    def test_strong_cross_offshore_loses_most_of_the_surface(self):
+        """The Kewalos case: trades 50 degrees off offshore, blowing 10 m/s.
+
+        Their rating halves between a light and a strong cross-offshore wind,
+        so ours cannot sit at 0.9 the way the old cosine curve did.
+        """
+        light = surf.wind_score(3.0, 140, WEST_FACING)
+        strong = surf.wind_score(10.0, 140, WEST_FACING)
+        assert strong < 0.75
+        assert strong < light * 0.85
+
+    @pytest.mark.parametrize(
+        "offset,expected",
+        [(0, 1.0), (30, 0.9), (75, 0.5), (105, 0.3), (150, 0.1), (180, 0.0)],
+    )
+    def test_direction_quality_anchors(self, offset, expected):
+        assert surf.direction_quality(offset) == pytest.approx(expected)
+
+    def test_direction_quality_never_rises_with_angle(self):
+        values = [surf.direction_quality(a) for a in range(0, 181, 5)]
+        assert values == sorted(values, reverse=True)
+
     def test_a_howling_offshore_is_penalised(self):
         moderate = surf.wind_score(6.0, 90, WEST_FACING)
         howling = surf.wind_score(18.0, 90, WEST_FACING)
