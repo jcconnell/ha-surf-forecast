@@ -71,9 +71,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# How many forecast hours to expose as an attribute. Bounded so the recorder
-# is not asked to store an unreasonable blob every state change.
+# How far ahead the forecast and tides attributes reach. Both also look back
+# to the start of the local day, so a dashboard can draw all of today. They are
+# kept out of the recorder, which would refuse a blob this size anyway.
 FORECAST_ATTRIBUTE_HOURS = 24
+TIDES_ATTRIBUTE_HOURS = 48
 
 
 @dataclass(slots=True)
@@ -91,6 +93,7 @@ class SurfData:
     astronomy_today: dict[str, Any] | None = None
     best_window: dict[str, Any] | None = None
     forecast: list[dict[str, Any]] = field(default_factory=list)
+    tide_schedule: list[dict[str, Any]] = field(default_factory=list)
     requests_remaining: int | None = None
     daily_quota: int | None = None
     station: dict[str, Any] | None = None
@@ -333,8 +336,10 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
             )
         elif need_weather:
             try:
+                # From local midnight rather than now, so the hours already
+                # gone today are in the cache too. Still a single request.
                 self._weather_payload = await self.client.async_get_weather(
-                    start=now.replace(minute=0, second=0, microsecond=0),
+                    start=_start_of_local_day(now),
                     end=now + timedelta(days=self.forecast_days),
                 )
                 self._weather_fetched = now
@@ -427,6 +432,7 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
             astronomy_today=astronomy_today,
             best_window=self._best_window(hours, astronomy_today, now),
             forecast=self._forecast_summary(hours, now),
+            tide_schedule=_tide_schedule(tides, now),
             requests_remaining=self.client.requests_remaining,
             daily_quota=self.client.daily_quota,
             shore_check=self._shore_check(hours),
@@ -521,12 +527,14 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
         hours: list[dict[str, Any]],
         now: datetime,
     ) -> list[dict[str, Any]]:
-        """Build a compact rated forecast for the next day."""
+        """Build a rated forecast from local midnight to a day from now."""
+        start = _start_of_local_day(now)
+        end = now + timedelta(hours=FORECAST_ATTRIBUTE_HOURS)
         summary: list[dict[str, Any]] = []
         for hour in hours:
-            if hour["time"] < now:
+            if hour["time"] < start:
                 continue
-            if len(summary) >= FORECAST_ATTRIBUTE_HOURS:
+            if hour["time"] >= end:
                 break
             rating = self._rate(hour)
             summary.append(
@@ -543,6 +551,15 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
                         self.shore_direction,
                         hour.get("windSpeed"),
                     ),
+                    # Raw open-water values. surf_height and swell_period above
+                    # are what reaches the break; these are not filtered.
+                    "wave_period": hour.get("wavePeriod"),
+                    "wave_direction": hour.get("waveDirection"),
+                    "swell_height": hour.get("swellHeight"),
+                    "swell_direction": hour.get("swellDirection"),
+                    "wind_direction": hour.get("windDirection"),
+                    "gust": hour.get("gust"),
+                    "sea_level": hour.get("seaLevel"),
                 }
             )
         return summary
@@ -594,6 +611,30 @@ def _is_stale(
         return True
     end = parse.horizon_end(entries)
     return end is None or end - now < min_horizon
+
+
+def _start_of_local_day(moment: datetime) -> datetime:
+    """Midnight of the local day containing ``moment``."""
+    return dt_util.start_of_local_day(dt_util.as_local(moment))
+
+
+def _tide_schedule(
+    tides: list[dict[str, Any]],
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Tide extremes from local midnight to two days out, ready to publish."""
+    return [
+        {
+            "time": tide["time"].isoformat(),
+            "type": tide["type"],
+            "height": tide["height"],
+        }
+        for tide in parse.extremes_between(
+            tides,
+            _start_of_local_day(now),
+            now + timedelta(hours=TIDES_ATTRIBUTE_HOURS),
+        )
+    ]
 
 
 def _station(payload: dict[str, Any] | None) -> dict[str, Any] | None:

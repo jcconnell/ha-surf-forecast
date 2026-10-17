@@ -219,6 +219,15 @@ def tide_context(
     }
 
 
+def extremes_between(
+    tides: list[dict[str, Any]],
+    start: datetime,
+    end: datetime,
+) -> list[dict[str, Any]]:
+    """Tide extremes falling within ``start`` to ``end``, both inclusive."""
+    return [tide for tide in tides if start <= tide["time"] <= end]
+
+
 def astronomy_for_day(
     days: list[dict[str, Any]],
     moment: datetime,

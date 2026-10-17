@@ -259,6 +259,33 @@ class TestTideContext:
         assert context["previous"]["type"] == "high"
 
 
+class TestExtremesBetween:
+    TIDES = [
+        {"time": NOON - timedelta(hours=9), "height": 0.1, "type": "low"},
+        {"time": NOON - timedelta(hours=3), "height": 1.2, "type": "high"},
+        {"time": NOON + timedelta(hours=3), "height": 0.2, "type": "low"},
+        {"time": NOON + timedelta(hours=9), "height": 1.3, "type": "high"},
+    ]
+
+    def test_keeps_past_and_future_extremes_inside_the_window(self):
+        window = parse.extremes_between(
+            self.TIDES, NOON - timedelta(hours=6), NOON + timedelta(hours=6)
+        )
+        assert [tide["time"] for tide in window] == [
+            NOON - timedelta(hours=3),
+            NOON + timedelta(hours=3),
+        ]
+
+    def test_boundaries_are_inclusive(self):
+        window = parse.extremes_between(
+            self.TIDES, NOON - timedelta(hours=9), NOON + timedelta(hours=9)
+        )
+        assert len(window) == 4
+
+    def test_no_data_gives_an_empty_list(self):
+        assert parse.extremes_between([], NOON, NOON + timedelta(days=2)) == []
+
+
 class TestAstronomyForDay:
     DAYS = [
         {"time": NOON.replace(hour=0) + timedelta(days=offset), "sunrise": offset}
