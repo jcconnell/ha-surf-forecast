@@ -321,6 +321,7 @@ SENSORS: tuple[SurfSensorDescription, ...] = (
         attr_fn=lambda data: {
             "station": (data.station or {}).get("name"),
             "station_distance_km": (data.station or {}).get("distance"),
+            "tides": data.tide_schedule,
         },
     ),
     SurfSensorDescription(
@@ -416,9 +417,9 @@ class SurfForecastSensor(SurfForecastEntity, SensorEntity):
 
     entity_description: SurfSensorDescription
 
-    # The rated hourly forecast is far too large to write to the database on
-    # every state change.
-    _unrecorded_attributes = frozenset({"forecast"})
+    # The rated hourly forecast and the tide schedule are far too large to
+    # write to the database on every state change.
+    _unrecorded_attributes = frozenset({"forecast", "tides"})
 
     def __init__(
         self,

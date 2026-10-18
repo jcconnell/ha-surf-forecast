@@ -1,12 +1,13 @@
 """End to end tests: HTTP layer, coordinator, and entities together."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -22,6 +23,7 @@ from custom_components.surf_forecast.const import (
     ENDPOINT_TIDE_EXTREMES,
     ENDPOINT_WEATHER,
 )
+from custom_components.surf_forecast.sensor import SurfForecastSensor
 
 ENTRY_DATA = {
     CONF_NAME: "Test Beach",
@@ -473,3 +475,194 @@ async def test_hourly_recompute_does_not_postpone_the_forecast_fetch(
         await hass.async_block_till_done()
 
     assert weather_calls() == 2
+
+
+# Honolulu has no daylight saving, so local midnight is always 10:00 UTC.
+HONOLULU = "Pacific/Honolulu"
+
+
+def _day_payload(midnight, now):
+    """Three days of hours from local midnight, with every field the view uses.
+
+    The hours already gone today are epic and the rest are small, so a best
+    window that looked backwards would be caught out.
+    """
+    hours = []
+    for offset in range(72):
+        moment = midnight + timedelta(hours=offset)
+        past = moment < now
+        hour = {
+            "time": moment.isoformat(),
+            "waveHeight": {"sg": 1.8 if past else 0.5},
+            "wavePeriod": {"sg": 11.0},
+            "waveDirection": {"sg": 200.0},
+            "swellHeight": {"sg": 1.8 if past else 0.5},
+            "swellPeriod": {"sg": 14.0},
+            "swellDirection": {"sg": 190.0},
+            "windSpeed": {"sg": 2.0},
+            "windDirection": {"sg": 45.0},
+            "gust": {"sg": 10.2},
+            "seaLevel": {"meto": 0.62, "sg": 0.62},
+        }
+        if offset == 5:
+            # A missing value must come through as None, not drop the key.
+            del hour["gust"]
+        hours.append(hour)
+    return {"hours": hours, "meta": {"dailyQuota": 10, "requestCount": 1}}
+
+
+def _tide_extremes(midnight):
+    """Extremes every six hours, starting the evening before local midnight."""
+    return {
+        "data": [
+            {
+                "time": (midnight + timedelta(hours=-3 + index * 6)).isoformat(),
+                "height": 0.7 if index % 2 == 0 else 0.1,
+                "type": "high" if index % 2 == 0 else "low",
+            }
+            for index in range(20)
+        ],
+        "meta": {"dailyQuota": 10, "requestCount": 2},
+    }
+
+
+def _honolulu_daylight(midnight):
+    """Sunrise 6:30 am and sunset 6 pm local, keyed by UTC day as Stormglass does."""
+    return {
+        "data": [
+            {
+                "time": datetime(2026, 10, 17, tzinfo=dt_util.UTC).isoformat(),
+                "sunrise": (midnight + timedelta(hours=6, minutes=30)).isoformat(),
+                "sunset": (midnight + timedelta(hours=18)).isoformat(),
+            }
+        ],
+        "meta": {"dailyQuota": 10, "requestCount": 3},
+    }
+
+
+async def _setup_honolulu_afternoon(hass, aioclient_mock, freezer):
+    """A south-facing break at 1:30 pm local, with the cache from midnight."""
+    await hass.config.async_set_time_zone(HONOLULU)
+    midnight = datetime(2026, 10, 17, tzinfo=dt_util.get_time_zone(HONOLULU))
+    now = midnight + timedelta(hours=13, minutes=30)
+    freezer.move_to(now)
+
+    aioclient_mock.get(ENDPOINT_WEATHER, json=_day_payload(midnight, now))
+    aioclient_mock.get(ENDPOINT_TIDE_EXTREMES, json=_tide_extremes(midnight))
+    aioclient_mock.get(ENDPOINT_ASTRONOMY, json=_honolulu_daylight(midnight))
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Test Beach",
+        data={**ENTRY_DATA, CONF_SHORE_DIRECTION: 180.0},
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return midnight, now
+
+
+async def test_weather_is_fetched_from_local_midnight(
+    hass, aioclient_mock, freezer
+):
+    """Starting at midnight puts all of today in the same single request."""
+    midnight, _now = await _setup_honolulu_afternoon(
+        hass, aioclient_mock, freezer
+    )
+
+    weather_calls = [
+        call for call in aioclient_mock.mock_calls
+        if str(call[1]).startswith(ENDPOINT_WEATHER)
+    ]
+    assert len(weather_calls) == 1
+    assert int(weather_calls[0][1].query["start"]) == int(midnight.timestamp())
+
+
+async def test_forecast_covers_all_of_today_with_the_detail_a_view_needs(
+    hass, aioclient_mock, freezer
+):
+    """Hours run from local midnight to a day ahead, each with every field."""
+    midnight, now = await _setup_honolulu_afternoon(
+        hass, aioclient_mock, freezer
+    )
+
+    forecast = hass.states.get("sensor.test_beach_surf_rating").attributes["forecast"]
+    times = [dt_util.parse_datetime(hour["time"]) for hour in forecast]
+    assert times[0] == midnight
+    assert times[-1] < now + timedelta(hours=24)
+    # Midnight through 1 pm tomorrow: 14 hours today plus 24.
+    assert len(forecast) == 38
+
+    expected = {
+        "time", "rating", "conditions", "wave_height", "surf_height",
+        "swell_period", "wind_speed", "wind_relation", "wave_period",
+        "wave_direction", "swell_height", "swell_direction", "wind_direction",
+        "gust", "sea_level",
+    }
+    assert all(set(hour) == expected for hour in forecast)
+
+    hour = forecast[0]
+    assert hour["wave_period"] == 11.0
+    assert hour["wave_direction"] == 200.0
+    assert hour["swell_height"] == 1.8
+    assert hour["swell_direction"] == 190.0
+    assert hour["wind_direction"] == 45.0
+    # Units are untouched: m/s and metres above mean sea level.
+    assert hour["gust"] == 10.2
+    assert hour["sea_level"] == 0.62
+    assert forecast[5]["gust"] is None
+
+
+async def test_hours_already_gone_do_not_drive_current_conditions(
+    hass, aioclient_mock, freezer
+):
+    """The morning was epic, but it is over; now and the best window move on."""
+    _midnight, now = await _setup_honolulu_afternoon(
+        hass, aioclient_mock, freezer
+    )
+
+    # 1:30 pm is equidistant from 1 pm (epic) and 2 pm (small); the freezer
+    # pins it, so nearest_hour keeps the earlier one, as it always has.
+    assert float(hass.states.get("sensor.test_beach_wave_height").state) == 1.8
+
+    best = hass.states.get("sensor.test_beach_best_window_today")
+    assert dt_util.parse_datetime(best.state) >= now
+    assert best.attributes["wave_height_m"] == 0.5
+
+
+async def test_tide_sensor_lists_extremes_from_midnight_to_two_days_out(
+    hass, aioclient_mock, freezer
+):
+    """Today's earlier extremes are kept, so a view can draw the whole day."""
+    midnight, now = await _setup_honolulu_afternoon(
+        hass, aioclient_mock, freezer
+    )
+
+    tide = hass.states.get("sensor.test_beach_tide")
+    tides = tide.attributes["tides"]
+    times = [dt_util.parse_datetime(extreme["time"]) for extreme in tides]
+
+    # The 9 pm extreme from the night before is left out.
+    assert times[0] == midnight + timedelta(hours=3)
+    assert times[-1] <= now + timedelta(hours=48)
+    assert times[-1] + timedelta(hours=6) > now + timedelta(hours=48)
+    assert tides[0] == {
+        "time": (midnight + timedelta(hours=3)).astimezone(dt_util.UTC).isoformat(),
+        "type": "low",
+        "height": 0.1,
+    }
+
+    next_high = hass.states.get("sensor.test_beach_next_high_tide")
+    upcoming_highs = [
+        extreme for extreme, moment in zip(tides, times)
+        if moment > now and extreme["type"] == "high"
+    ]
+    assert dt_util.parse_datetime(next_high.state) == dt_util.parse_datetime(
+        upcoming_highs[0]["time"]
+    )
+    assert next_high.attributes["height_m"] == upcoming_highs[0]["height"]
+
+
+def test_large_attributes_are_kept_out_of_the_recorder():
+    """48 rich hours would blow past the recorder's attribute size limit."""
+    assert {"forecast", "tides"} <= SurfForecastSensor._unrecorded_attributes

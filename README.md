@@ -206,8 +206,40 @@ automation:
                | timestamp_custom('%-I:%M %p') }}.
 ```
 
-The `Surf rating` sensor also carries a `forecast` attribute: the next 24 hours
-rated hour by hour. It is deliberately excluded from the recorder database.
+## Hourly attributes for dashboards
+
+Two sensors carry the detail a dashboard needs to draw a day, built from data
+already fetched, so they cost no extra requests. Both start at local midnight,
+so the hours already gone today are there too, and both are excluded from the
+recorder database.
+
+The `Surf rating` sensor's `forecast` attribute lists every hour from local
+midnight to 24 hours from now, rated:
+
+| Key | Unit | Notes |
+| --- | --- | --- |
+| `time` | ISO 8601, UTC | Start of the hour |
+| `rating` | 0–10 | |
+| `conditions` | | Flat / Poor / Fair / Good / Very good / Epic |
+| `wave_height` | m | Combined open-water wave height |
+| `surf_height` | m | Swell that can reach the break, as rated |
+| `swell_period` | s | Period of the swell that reaches the break |
+| `wind_speed` | m/s | |
+| `wind_relation` | | Glassy, Offshore, … Onshore |
+| `wave_period` | s | Combined open-water wave period |
+| `wave_direction` | ° | Direction the waves come from |
+| `swell_height` | m | Primary swell, unfiltered |
+| `swell_direction` | ° | Direction the primary swell comes from |
+| `wind_direction` | ° | Direction the wind comes from |
+| `gust` | m/s | |
+| `sea_level` | m | Hourly sea level relative to mean sea level, for a tide curve |
+
+A value Stormglass did not supply is `null`; the key is always present.
+
+The `Tide` sensor's `tides` attribute lists the high and low extremes from local
+midnight to 48 hours from now, as `{time, type, height}` with `type` either
+`high` or `low` and `height` in metres on the configured tide datum. Extremes
+earlier today only appear if they were in the last tide fetch.
 
 ## Tests
 
