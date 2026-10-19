@@ -96,6 +96,11 @@ TIDE_DATUMS = ("LAT", "MLLW", "MLW", "MSL", "MHW", "MHHW", "HAT")
 TIDE_CACHE_HOURS = 12
 ASTRONOMY_CACHE_HOURS = 12
 TIDE_HORIZON_DAYS = 10
+# Tide extremes are fetched from this long before local midnight, so the
+# payload always holds one extreme before the day starts and a tide curve can
+# be drawn from 12 am. Twelve hours always reaches one at a semidiurnal or
+# mixed tide station. The request still spans TIDE_HORIZON_DAYS.
+TIDE_LOOKBACK_HOURS = 12
 ASTRONOMY_HORIZON_DAYS = 5
 
 # Leave this many requests unspent so a manual reload never hits a hard stop.

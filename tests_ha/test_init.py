@@ -512,15 +512,17 @@ def _day_payload(midnight, now):
 
 
 def _tide_extremes(midnight):
-    """Extremes every six hours, starting the evening before local midnight."""
+    """Extremes every six hours: a high at 3 pm and a low at 9 pm the day
+    before, then a high at 3 am, a low at 9 am, and so on.
+    """
     return {
         "data": [
             {
-                "time": (midnight + timedelta(hours=-3 + index * 6)).isoformat(),
+                "time": (midnight + timedelta(hours=-9 + index * 6)).isoformat(),
                 "height": 0.7 if index % 2 == 0 else 0.1,
                 "type": "high" if index % 2 == 0 else "low",
             }
-            for index in range(20)
+            for index in range(22)
         ],
         "meta": {"dailyQuota": 10, "requestCount": 2},
     }
@@ -540,11 +542,13 @@ def _honolulu_daylight(midnight):
     }
 
 
-async def _setup_honolulu_afternoon(hass, aioclient_mock, freezer):
+async def _setup_honolulu_afternoon(
+    hass, aioclient_mock, freezer, at=timedelta(hours=13, minutes=30)
+):
     """A south-facing break at 1:30 pm local, with the cache from midnight."""
     await hass.config.async_set_time_zone(HONOLULU)
     midnight = datetime(2026, 10, 17, tzinfo=dt_util.get_time_zone(HONOLULU))
-    now = midnight + timedelta(hours=13, minutes=30)
+    now = midnight + at
     freezer.move_to(now)
 
     aioclient_mock.get(ENDPOINT_WEATHER, json=_day_payload(midnight, now))
@@ -630,10 +634,31 @@ async def test_hours_already_gone_do_not_drive_current_conditions(
     assert best.attributes["wave_height_m"] == 0.5
 
 
+async def test_tide_extremes_are_fetched_from_noon_the_day_before(
+    hass, aioclient_mock, freezer
+):
+    """A morning fetch must still cover the small hours, at the same span."""
+    midnight, _now = await _setup_honolulu_afternoon(
+        hass, aioclient_mock, freezer, at=timedelta(hours=8, minutes=27)
+    )
+
+    tide_calls = [
+        call for call in aioclient_mock.mock_calls
+        if str(call[1]).startswith(ENDPOINT_TIDE_EXTREMES)
+    ]
+    assert len(tide_calls) == 1
+    query = tide_calls[0][1].query
+    start = midnight - timedelta(hours=12)
+    assert int(query["start"]) == int(start.timestamp())
+    assert int(query["end"]) == int((start + timedelta(days=10)).timestamp())
+
+
 async def test_tide_sensor_lists_extremes_from_midnight_to_two_days_out(
     hass, aioclient_mock, freezer
 ):
-    """Today's earlier extremes are kept, so a view can draw the whole day."""
+    """The list opens on the last extreme before midnight, so a view can draw
+    a curve from 12 am, then keeps today's earlier extremes.
+    """
     midnight, now = await _setup_honolulu_afternoon(
         hass, aioclient_mock, freezer
     )
@@ -642,15 +667,22 @@ async def test_tide_sensor_lists_extremes_from_midnight_to_two_days_out(
     tides = tide.attributes["tides"]
     times = [dt_util.parse_datetime(extreme["time"]) for extreme in tides]
 
-    # The 9 pm extreme from the night before is left out.
-    assert times[0] == midnight + timedelta(hours=3)
-    assert times[-1] <= now + timedelta(hours=48)
-    assert times[-1] + timedelta(hours=6) > now + timedelta(hours=48)
+    # The 9 pm low leads; the 3 pm high before it is not needed.
+    assert [moment for moment in times if moment < midnight] == [
+        midnight - timedelta(hours=3)
+    ]
     assert tides[0] == {
-        "time": (midnight + timedelta(hours=3)).astimezone(dt_util.UTC).isoformat(),
+        "time": (midnight - timedelta(hours=3)).astimezone(dt_util.UTC).isoformat(),
         "type": "low",
         "height": 0.1,
     }
+    assert times[1] == midnight + timedelta(hours=3)
+    assert times[-1] <= now + timedelta(hours=48)
+    assert times[-1] + timedelta(hours=6) > now + timedelta(hours=48)
+
+    # Past extremes in the payload do not leak into "next": after the 9 am
+    # low comes the 3 pm high.
+    assert tide.state == "Rising"
 
     next_high = hass.states.get("sensor.test_beach_next_high_tide")
     upcoming_highs = [

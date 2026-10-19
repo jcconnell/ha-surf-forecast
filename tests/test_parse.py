@@ -253,6 +253,19 @@ class TestTideContext:
         assert context["state"] is None
         assert context["next_high"] is None
 
+    def test_earlier_extremes_do_not_change_what_comes_next(self):
+        """A payload fetched from the day before must read the same as one
+        fetched from now.
+        """
+        earlier = [
+            {"time": NOON - timedelta(hours=15), "height": 1.1, "type": "high"},
+            {"time": NOON - timedelta(hours=9), "height": 0.3, "type": "low"},
+        ]
+        with_history = parse.tide_context(earlier + self.TIDES, NOON)
+        without = parse.tide_context(self.TIDES[1:], NOON)
+        for key in ("state", "next", "next_high", "next_low"):
+            assert with_history[key] == without[key]
+
     def test_exhausted_data_gives_an_unknown_state(self):
         context = parse.tide_context(self.TIDES, NOON + timedelta(days=5))
         assert context["state"] is None
@@ -284,6 +297,27 @@ class TestExtremesBetween:
 
     def test_no_data_gives_an_empty_list(self):
         assert parse.extremes_between([], NOON, NOON + timedelta(days=2)) == []
+
+
+class TestLastExtremeBefore:
+    TIDES = TestExtremesBetween.TIDES
+
+    def test_picks_the_latest_one_before(self):
+        assert parse.last_extreme_before(self.TIDES, NOON)["time"] == NOON - timedelta(
+            hours=3
+        )
+
+    def test_an_extreme_at_the_moment_itself_does_not_count(self):
+        moment = NOON - timedelta(hours=3)
+        assert parse.last_extreme_before(self.TIDES, moment)["time"] == NOON - timedelta(
+            hours=9
+        )
+
+    def test_none_when_every_extreme_is_later(self):
+        assert parse.last_extreme_before(self.TIDES, NOON - timedelta(days=1)) is None
+
+    def test_no_data_gives_none(self):
+        assert parse.last_extreme_before([], NOON) is None
 
 
 class TestAstronomyForDay:
