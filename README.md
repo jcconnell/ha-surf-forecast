@@ -236,10 +236,12 @@ midnight to 24 hours from now, rated:
 
 A value Stormglass did not supply is `null`; the key is always present.
 
-The `Tide` sensor's `tides` attribute lists the high and low extremes from local
-midnight to 48 hours from now, as `{time, type, height}` with `type` either
-`high` or `low` and `height` in metres on the configured tide datum. Extremes
-earlier today only appear if they were in the last tide fetch.
+The `Tide` sensor's `tides` attribute lists the high and low extremes as
+`{time, type, height}`, with `type` either `high` or `low` and `height` in metres
+on the configured tide datum. It starts with the last extreme before local
+midnight, so a curve can be drawn from 12 am, and runs to 48 hours from now.
+Tides are fetched from 12 hours before local midnight to make that possible; it
+is still one request.
 
 ## Tests
 

@@ -67,6 +67,7 @@ from .const import (
     STORAGE_VERSION,
     TIDE_CACHE_HOURS,
     TIDE_HORIZON_DAYS,
+    TIDE_LOOKBACK_HOURS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -353,10 +354,15 @@ class SurfForecastCoordinator(DataUpdateCoordinator[SurfData]):
                 errors.append(str(err))
 
         if need_tide and self._may_spend():
+            # From before local midnight, so today's early extremes survive a
+            # refetch later in the day. Same span, still a single request.
+            tide_start = _start_of_local_day(now) - timedelta(
+                hours=TIDE_LOOKBACK_HOURS
+            )
             try:
                 self._tide_payload = await self.client.async_get_tide_extremes(
-                    start=now,
-                    end=now + timedelta(days=TIDE_HORIZON_DAYS),
+                    start=tide_start,
+                    end=tide_start + timedelta(days=TIDE_HORIZON_DAYS),
                     datum=self.tide_datum,
                 )
                 self._tide_fetched = now
@@ -622,16 +628,23 @@ def _tide_schedule(
     tides: list[dict[str, Any]],
     now: datetime,
 ) -> list[dict[str, Any]]:
-    """Tide extremes from local midnight to two days out, ready to publish."""
+    """Tide extremes from local midnight to two days out, ready to publish.
+
+    The last extreme before midnight leads the list, so a consumer can
+    interpolate a curve from the very start of the day.
+    """
+    start = _start_of_local_day(now)
+    before = parse.last_extreme_before(tides, start)
     return [
         {
             "time": tide["time"].isoformat(),
             "type": tide["type"],
             "height": tide["height"],
         }
-        for tide in parse.extremes_between(
+        for tide in ([before] if before else [])
+        + parse.extremes_between(
             tides,
-            _start_of_local_day(now),
+            start,
             now + timedelta(hours=TIDES_ATTRIBUTE_HOURS),
         )
     ]

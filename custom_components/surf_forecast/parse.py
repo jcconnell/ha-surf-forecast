@@ -228,6 +228,19 @@ def extremes_between(
     return [tide for tide in tides if start <= tide["time"] <= end]
 
 
+def last_extreme_before(
+    tides: list[dict[str, Any]],
+    moment: datetime,
+) -> dict[str, Any] | None:
+    """The latest tide extreme strictly before ``moment``, or None."""
+    previous = None
+    for tide in tides:
+        if tide["time"] >= moment:
+            break
+        previous = tide
+    return previous
+
+
 def astronomy_for_day(
     days: list[dict[str, Any]],
     moment: datetime,
