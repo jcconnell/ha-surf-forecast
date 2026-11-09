@@ -9,8 +9,13 @@ Built around one hard constraint: **the free Stormglass plan allows 10 API
 requests per day.** Most of the design below exists to stay under that.
 
 ## Examples
-<img width="425" alt="Light" src="https://github.com/user-attachments/assets/d4fae560-808b-4fcd-9eb6-abdacaa13319" /> <img width="425" alt="dark" src="https://github.com/user-attachments/assets/aa6dc361-67a7-43be-8deb-59fe809660c0" />
 
+<img width="380" alt="Surf dashboard in light mode: best window today, an hourly chart of wave height, tide and wind, and current conditions" src="docs/images/dashboard-light.png" /> <img width="380" alt="The same surf dashboard in dark mode" src="docs/images/dashboard-dark.png" />
+
+A dashboard built only from this integration's entities, for Kewalo Basin in
+Honolulu. To build the same one, see [Example dashboard](#example-dashboard).
+The background is the [Frosted Glass](https://github.com/wessamlauf/homeassistant-frosted-glass-themes)
+theme; the cards bring their own colours and work on any theme.
 
 
 ## What you get
@@ -242,6 +247,67 @@ on the configured tide datum. It starts with the last extreme before local
 midnight, so a curve can be drawn from 12 am, and runs to 48 hours from now.
 Tides are fetched from 12 hours before local midnight to make that possible; it
 is still one request.
+
+## Example dashboard
+
+The screenshots at the top are three [button-card](https://github.com/custom-cards/button-card)
+cards reading one template sensor. Everything they show comes from the
+attributes above, so the dashboard costs no extra requests. The files are in
+[`examples/dashboard`](examples/dashboard).
+
+| File | What it is |
+| --- | --- |
+| [`surf_package.yaml`](examples/dashboard/surf_package.yaml) | A [package](https://www.home-assistant.io/docs/configuration/packages/) that builds `sensor.surf_hourly`: today's hours from 5 AM to 8 PM, the best daylight window, and the tide extremes, in feet and knots |
+| [`surf_view.yaml`](examples/dashboard/surf_view.yaml) | The `surf_card` button-card template and a view with the three cards |
+
+The package reshapes the forecast into one entity. It is trigger-based YAML
+rather than a UI template helper because it keeps list attributes.
+
+1. Install **button-card** from HACS (Frontend).
+2. Copy `surf_package.yaml` into your packages folder. If you don't have one
+   yet, add this to `configuration.yaml`:
+   ```yaml
+   homeassistant:
+     packages: !include_dir_named packages
+   ```
+3. In the package, replace every `kewalos` with your spot's entity prefix: the
+   spot name you entered at setup, lower-cased with spaces as underscores
+   (`sensor.home_break_surf_rating` → `home_break`).
+4. The cards label sizes in feet and wind in knots. Forecast hours are
+   converted in the package, but the **Right now** values are read as Home
+   Assistant displays them, so set the wave height, swell height, wind speed
+   and wind gust entities to `ft` and `kn` (see [Units](#units)).
+5. Restart Home Assistant, or reload **Template entities** from the **YAML**
+   tab of **Tools** (**Developer Tools** before 2026.8). Check that
+   `sensor.surf_hourly` has an `hours` attribute.
+6. Settings → Dashboards → **Add dashboard** → *New dashboard from scratch*.
+   Open it, then pencil → ⋮ → **Raw configuration editor**, and paste
+   `surf_view.yaml` in place of what is there.
+
+On an existing dashboard, put `surf_card` under that dashboard's
+`button_card_templates:` and add the view to its `views:` instead of replacing
+the whole configuration.
+
+### Updating the screenshots
+
+[`scripts/screenshot.py`](scripts/screenshot.py) renders a dashboard view in
+headless Chrome at phone width, in light and dark mode, and writes
+`docs/images/dashboard-light.png` and `dashboard-dark.png`. It signs in with a
+long-lived access token (your profile → Security → Long-lived access tokens):
+
+```bash
+pip install playwright
+export HASS_SERVER=http://homeassistant.local:8123
+export HASS_TOKEN=<long-lived access token>
+python scripts/screenshot.py --view lovelace/surf --out docs/images
+```
+
+`--view` is the dashboard path as it appears in the browser address bar. The
+page uses the token owner's profile theme, with dark mode switched per shot. The
+script uses your installed Google Chrome; pass `--channel chromium` after
+`playwright install chromium` to use Playwright's own build. The screenshots
+show whatever the forecast is at the time, so take them on a day with
+something worth showing.
 
 ## Tests
 
