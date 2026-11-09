@@ -1,0 +1,235 @@
+# Surf dashboard package for the surf_forecast integration.
+#
+# Builds one template sensor, sensor.surf_hourly, that the cards in surf_view.yaml read.
+# Display only: it uses data the integration already fetched, so it costs no Stormglass
+# requests. It is YAML rather than a UI template helper because it is trigger-based and
+# keeps list attributes.
+#
+# Before you use it:
+#   - Replace every `kewalos` with your spot's entity prefix (the slug of the spot name
+#     you entered during setup, e.g. sensor.home_break_surf_rating -> `home_break`).
+#   - The live "right now" values are read from entity states as Home Assistant displays
+#     them, and the cards label them ft and kn. Set the wave, swell, wind speed and gust
+#     entities to those units (entity settings -> unit), or edit the labels in the cards.
+#   - Forecast hours come from attributes, which are always metres and m/s; they are
+#     converted to ft and kn below.
+#
+# Sources per hour (5 AM - 8 PM today):
+#   current hour  -> live sensor.kewalos_* values
+#   other hours   -> sensor.kewalos_surf_rating `forecast` (m and m/s converted to ft and kn);
+#                    it runs from local midnight once a weather fetch has happened that day
+#   past hours the forecast doesn't cover -> frozen from this sensor's own previous `hours`
+# Tide: `tides` passes through the high/low extremes (ft) that touch 5 AM - 9 PM, plus one
+# on each side, and the card interpolates the curve between them. The forecast's
+# `sea_level` is not the tide at every spot (at Kewalos it is flat ~0.62 m), so it is ignored.
+# Score = the integration's own conditions (Good and up -> good, Fair -> fair, else poor).
+# Best window = longest run of good hours from now until sunset (hour midpoints in
+# daylight), falling back to fair. Once no daylight hours are left today, the same search
+# runs on tomorrow's forecast hours (window_day: tomorrow); otherwise "No window today".
+# window_start/window_end index today's chart, so they stay null for a tomorrow window;
+# window_hours/window_tides carry the rows and extremes of whichever window is shown.
+# Sunrise/sunset come from sun.sun (next rising/setting shifted to the day), not the
+# integration's sun sensors, which jump to tomorrow as soon as each event passes.
+template:
+  - triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: state
+        entity_id: [sensor.kewalos_surf_rating, sensor.kewalos_tide]
+      - trigger: time_pattern
+        minutes: "/15"
+    actions:
+      - variables:
+          today: "{{ now().date().isoformat() }}"
+          cur: "{{ now().hour }}"
+          ext: >
+            {# tide extremes as {t: epoch, kind, time, ft}; falls back to the next low/high sensors #}
+            {% set ns = namespace(e=[]) %}
+            {% for x in state_attr('sensor.kewalos_tide', 'tides') or [] %}
+              {% set t = as_datetime(x.time) %}
+              {% if t and x.type in ['high', 'low'] %}
+                {% set ns.e = ns.e + [{'t': as_timestamp(t), 'kind': x.type, 'time': x.time,
+                                      'ft': (x.height * 3.28084) | round(2) if x.height is number else none}] %}
+              {% endif %}
+            {% endfor %}
+            {% if not ns.e %}
+              {% for id, kind in [('sensor.kewalos_next_low_tide', 'low'), ('sensor.kewalos_next_high_tide', 'high')] %}
+                {% set t = as_datetime(states(id)) %}
+                {% if t %}{% set ns.e = ns.e + [{'t': as_timestamp(t), 'kind': kind, 'time': states(id), 'ft': none}] %}{% endif %}
+              {% endfor %}
+            {% endif %}
+            {{ ns.e | sort(attribute='t') }}
+          tide_window: >
+            {% set a, b = as_timestamp(today_at('05:00')), as_timestamp(today_at('21:00')) %}
+            {% set before = ext | selectattr('t', 'lt', a) | list %}
+            {% set after = ext | selectattr('t', 'gt', b) | list %}
+            {% set inside = ext | selectattr('t', 'ge', a) | selectattr('t', 'le', b) | list %}
+            {% set picked = (before[-1:] if before else []) + inside + (after[:1] if after else []) %}
+            {% set ns = namespace(out=[]) %}
+            {% for x in picked if x.ft is not none %}
+              {% set ns.out = ns.out + [{'time': x.time, 'type': x.kind, 'height': x.ft}] %}
+            {% endfor %}
+            {{ ns.out }}
+          score_of: >
+            {{ {'Epic': 'good', 'Very good': 'good', 'Good': 'good', 'Fair': 'fair', 'Poor': 'poor', 'Flat': 'poor'} }}
+          sun: >
+            {# [today, tomorrow] sunrise/sunset as local decimal hours; 6 / 18.5 if sun.sun is unavailable #}
+            {% set nr = as_datetime(state_attr('sun.sun', 'next_rising')) %}
+            {% set nst = as_datetime(state_attr('sun.sun', 'next_setting')) %}
+            {% set ns = namespace(o=[]) %}
+            {% for d in [0, 1] %}
+              {% set day = (now() + timedelta(days=d)).date() %}
+              {% if nr and nst %}
+                {% set r = as_local(nr) + timedelta(days=(day - as_local(nr).date()).days) %}
+                {% set st = as_local(nst) + timedelta(days=(day - as_local(nst).date()).days) %}
+                {% set ns.o = ns.o + [{'rise': r.hour + r.minute / 60, 'set': st.hour + st.minute / 60}] %}
+              {% else %}
+                {% set ns.o = ns.o + [{'rise': 6, 'set': 18.5}] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.o }}
+          rows: >
+            {# [today's rows, tomorrow's rows], 5 AM - 8 PM each #}
+            {# `this` is not available in trigger actions; read our own last attributes by id #}
+            {% set prev = (state_attr('sensor.surf_hourly', 'hours') or []) if state_attr('sensor.surf_hourly', 'date') == today else [] %}
+            {% set fc = state_attr('sensor.kewalos_surf_rating', 'forecast') or [] %}
+            {% set ns = namespace(d0=[], d1=[]) %}
+            {% for d in [0, 1] %}
+              {% set day = (now() + timedelta(days=d)).date().isoformat() %}
+              {% for h in range(5, 21) %}
+                {% set ts = as_timestamp(today_at('%02d:30' % h) + timedelta(days=d)) %}
+                {% set nt = ext | selectattr('t', 'gt', ts) | first %}
+                {% set trend = none if not nt else ('rising' if nt.kind == 'high' else 'falling') %}
+                {% set row = {'hour': h, 'score': none, 'rating': none, 'wave': none, 'wave_period': none, 'wave_dir': none,
+                              'swell': none, 'swell_period': none, 'swell_dir': none, 'wind': none, 'gust': none,
+                              'wind_dir': none, 'wind_rel': none, 'tide': none, 'tide_trend': trend} %}
+                {% if d == 0 and h == cur %}
+                  {% set r = states('sensor.kewalos_surf_rating') %}
+                  {% if is_number(r) %}
+                    {% set row = dict(row,
+                        score=score_of.get(state_attr('sensor.kewalos_surf_rating', 'conditions'), 'poor'),
+                        rating=r | float,
+                        wave=states('sensor.kewalos_wave_height') | float(none) | round(1) if is_number(states('sensor.kewalos_wave_height')) else none,
+                        wave_period=states('sensor.kewalos_wave_period') | float(0) | round(0) | int,
+                        wave_dir=states('sensor.kewalos_wave_direction') | float(0) | round(0) | int,
+                        swell=((state_attr('sensor.kewalos_surf_rating', 'surf_height_m') | float(0)) * 3.28084) | round(1),
+                        swell_period=states('sensor.kewalos_swell_period') | float(0) | round(0) | int,
+                        swell_dir=states('sensor.kewalos_swell_direction') | float(0) | round(0) | int,
+                        wind=states('sensor.kewalos_wind_speed') | float(0) | round(0) | int,
+                        gust=states('sensor.kewalos_wind_gust') | float(0) | round(0) | int,
+                        wind_dir=states('sensor.kewalos_wind_direction') | float(0) | round(0) | int,
+                        wind_rel=states('sensor.kewalos_wind_direction_relative_to_shore') if states('sensor.kewalos_wind_direction_relative_to_shore') not in ['unknown', 'unavailable'] else none) %}
+                  {% endif %}
+                {% else %}
+                  {% set rw = namespace(row=none) %}
+                  {% for x in fc %}
+                    {% set lt = as_local(as_datetime(x.time)) %}
+                    {% if lt.date().isoformat() == day and lt.hour == h and x.wave_height is not none %}
+                      {% set rw.row = dict(row,
+                          score=score_of.get(x.conditions, 'poor'),
+                          rating=x.rating,
+                          wave=(x.wave_height * 3.28084) | round(1),
+                          wave_period=(x.wave_period | round(0) | int) if x.wave_period is number else none,
+                          wave_dir=(x.wave_direction | round(0) | int) if x.wave_direction is number else none,
+                          swell=((x.surf_height or 0) * 3.28084) | round(1),
+                          swell_period=(x.swell_period or 0) | round(0) | int,
+                          swell_dir=(x.swell_direction | round(0) | int) if x.swell_direction is number else none,
+                          wind=((x.wind_speed or 0) * 1.94384) | round(0) | int,
+                          gust=((x.gust * 1.94384) | round(0) | int) if x.gust is number else none,
+                          wind_dir=(x.wind_direction | round(0) | int) if x.wind_direction is number else none,
+                          wind_rel=x.wind_relation) %}
+                    {% endif %}
+                  {% endfor %}
+                  {% if rw.row is not none %}
+                    {% set row = rw.row %}
+                  {% elif d == 0 and h < cur %}
+                    {% set row = dict(prev | selectattr('hour', 'eq', h) | first | default(row, true), tide_trend=trend) %}
+                  {% endif %}
+                {% endif %}
+                {% if d == 0 %}{% set ns.d0 = ns.d0 + [row] %}{% else %}{% set ns.d1 = ns.d1 + [row] %}{% endif %}
+              {% endfor %}
+            {% endfor %}
+            {{ [ns.d0, ns.d1] }}
+          hours: "{{ rows[0] }}"
+          window: >
+            {# today until sunset; tomorrow only once no daylight hour is left today #}
+            {% set ns = namespace(best=none) %}
+            {% for d in ([0, 1] if cur + 0.5 >= sun[0].set else [0]) %}
+              {% for want in ['good', 'fair'] %}
+                {% if ns.best is none %}
+                  {% set rn = namespace(s=none, len=0, top=none, tlen=0) %}
+                  {% for r in rows[d] %}
+                    {% set ok = (d == 1 or r.hour >= cur) and r.hour + 0.5 > sun[d].rise and r.hour + 0.5 < sun[d].set and r.score == want %}
+                    {% if ok %}
+                      {% if rn.s is none %}{% set rn.s = r.hour %}{% set rn.len = 0 %}{% endif %}
+                      {% set rn.len = rn.len + 1 %}
+                      {% if rn.len > rn.tlen %}{% set rn.top = rn.s %}{% set rn.tlen = rn.len %}{% endif %}
+                    {% else %}
+                      {% set rn.s = none %}
+                    {% endif %}
+                  {% endfor %}
+                  {% if rn.top is not none %}{% set ns.best = {'day': d, 'start': rn.top, 'end': rn.top + rn.tlen, 'score': want} %}{% endif %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+            {{ ns.best }}
+          window_tides: >
+            {% if window %}
+              {% set a = as_timestamp(today_at('%02d:00' % window.start) + timedelta(days=window.day)) %}
+              {% set b = a + (window.end - window.start) * 3600 %}
+              {% set ns = namespace(out=[]) %}
+              {% for x in ext if x.t >= a and x.t < b %}
+                {% set ns.out = ns.out + [{'time': x.time, 'type': x.kind, 'height': x.ft}] %}
+              {% endfor %}
+              {{ ns.out }}
+            {% else %}[]{% endif %}
+    sensor:
+      - name: Surf hourly
+        unique_id: surf_hourly_kewalos
+        icon: mdi:surfing
+        state: >
+          {% if not window %}No window today
+          {% else %}
+            {% set s, e = window.start, window.end %}
+            {% set fmt = '%-I:%M' %}
+            {% set sp = 'AM' if s < 12 else 'PM' %}
+            {% set ep = 'AM' if e < 12 or e == 24 else 'PM' %}
+            {% set st = today_at('%02d:00' % s).strftime(fmt) %}
+            {% set et = (today_at('00:00') + timedelta(hours=e)).strftime(fmt) %}
+            {{ st ~ (' ' ~ sp if sp != ep else '') ~ ' – ' ~ et ~ ' ' ~ ep }}
+          {% endif %}
+        attributes:
+          date: "{{ today }}"
+          hours: "{{ hours }}"
+          window_start: "{{ window.start if window and window.day == 0 else none }}"
+          window_end: "{{ window.end if window and window.day == 0 else none }}"
+          window_score: "{{ window.score if window else none }}"
+          window_day: "{{ (['today', 'tomorrow'][window.day]) if window else none }}"
+          window_hours: >
+            {{ (rows[window.day] | selectattr('hour', 'ge', window.start) | selectattr('hour', 'lt', window.end) | list) if window else [] }}
+          window_tides: "{{ window_tides }}"
+          # next extremes and trend come from the tides list against now(); the integration's
+          # next_*_tide sensors only move on its own refresh, so they can lag a passed extreme
+          next_high: >
+            {% set x = ext | selectattr('t', 'gt', as_timestamp(now())) | selectattr('kind', 'eq', 'high') | first %}
+            {{ x.time if x else none }}
+          next_low: >
+            {% set x = ext | selectattr('t', 'gt', as_timestamp(now())) | selectattr('kind', 'eq', 'low') | first %}
+            {{ x.time if x else none }}
+          tides: "{{ tide_window }}"
+          tide_trend: >
+            {% set x = ext | selectattr('t', 'gt', as_timestamp(now())) | first %}
+            {{ none if not x else ('rising' if x.kind == 'high' else 'falling') }}
+          now: >
+            {% set n = namespace(d={}) %}
+            {% for k, id in [('wave', 'wave_height'), ('wave_period', 'wave_period'), ('wave_dir', 'wave_direction'),
+                             ('swell', 'swell_height'), ('swell_period', 'swell_period'), ('swell_dir', 'swell_direction'),
+                             ('wind', 'wind_speed'), ('gust', 'wind_gust'), ('wind_dir', 'wind_direction')] %}
+              {% set v = states('sensor.kewalos_' ~ id) %}
+              {% set nd = 1 if k in ['wave', 'swell'] else 0 %}
+              {% set n.d = dict(n.d, **{k: ((v | float) | round(nd) if nd else (v | float) | round(0) | int) if is_number(v) else none}) %}
+            {% endfor %}
+            {% set rel = states('sensor.kewalos_wind_direction_relative_to_shore') %}
+            {{ dict(n.d, wind_rel=rel if rel not in ['unknown', 'unavailable'] else none) }}
