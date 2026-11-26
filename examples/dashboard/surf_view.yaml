@@ -1,0 +1,253 @@
+# Surf view for a Home Assistant dashboard, as it runs today.
+# Requires: button-card (HACS frontend) and examples/dashboard/surf_package.yaml.
+# Paste this into a new dashboard's raw configuration editor
+# (Settings > Dashboards > Add dashboard > open it > pencil > three dots > Raw configuration editor).
+# Every card reads sensor.surf_hourly, which the package builds.
+button_card_templates:
+  surf_card:
+    show_name: false
+    show_icon: false
+    show_state: false
+    tap_action:
+      action: none
+    styles:
+      card:
+      - color-scheme: |
+          [[[
+            const d = hass.selectedTheme && hass.selectedTheme.dark;
+            return d === true ? 'dark' : d === false ? 'light' : 'light dark';
+          ]]]
+      - --s-card: light-dark(rgba(255,255,255,0.6), rgba(28,30,56,0.62))
+      - --s-card-hero: light-dark(rgba(255,255,255,0.72), rgba(28,30,56,0.74))
+      - --s-border: light-dark(rgba(255,255,255,0.88), rgba(255,255,255,0.10))
+      - --s-shadow: light-dark(rgba(60,64,140,0.10), rgba(0,0,0,0.35))
+      - --s-ink: 'light-dark(#1d1f3a, #eceefb)'
+      - --s-ink2: 'light-dark(#3b3f66, #c9ccf2)'
+      - --s-label: 'light-dark(#5a5e88, #a6aad8)'
+      - --s-muted: 'light-dark(#7a7ea6, #8a8fbf)'
+      - --s-accent: 'light-dark(#5b63d3, #8f96ff)'
+      - --s-on-accent: 'light-dark(#ffffff, #14163a)'
+      - --s-fair: 'light-dark(#a9aeea, #565ca6)'
+      - --s-poor: 'light-dark(#d8daf0, #34375c)'
+      - --s-soft: light-dark(#eceefb, rgba(255,255,255,0.10))
+      - --s-chip-ink: 'light-dark(#2f3470, #dfe1ff)'
+      - --s-band: light-dark(rgba(91,99,211,0.09), rgba(143,150,255,0.12))
+      - --s-tide-fill: light-dark(rgba(91,99,211,0.14), rgba(143,150,255,0.20))
+      - --s-tick: light-dark(rgba(91,99,211,0.35), rgba(143,150,255,0.45))
+      - --s-track: light-dark(rgba(91,99,211,0.18), rgba(143,150,255,0.25))
+      - --s-divider: light-dark(rgba(29,31,58,0.08), rgba(255,255,255,0.10))
+      - background: var(--s-card)
+      - border: 1px solid var(--s-border)
+      - border-radius: 28px
+      - color: var(--s-ink)
+      grid:
+      - grid-template-areas: '"body"'
+      custom_fields:
+        body:
+        - justify-self: stretch
+        - text-align: left
+        - white-space: normal
+        - min-width: 0
+views:
+- title: Kewalos
+  path: surf
+  icon: mdi:surfing
+  type: sections
+  max_columns: 1
+  sections:
+  - type: grid
+    cards:
+    - type: vertical-stack
+      grid_options:
+        columns: full
+      cards:
+      - type: custom:button-card
+        entity: sensor.surf_hourly
+        template: surf_card
+        styles:
+          card:
+          - background: var(--s-card-hero)
+          - padding: 22px
+          - box-shadow: 0 8px 30px var(--s-shadow)
+        custom_fields:
+          body: |
+            [[[
+              const label = 'font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--s-label)';
+              const a = (entity && entity.attributes) || {}, H = a.hours || [];
+              // after sunset the sensor looks ahead to tomorrow (window_day: tomorrow)
+              const tmr = a.window_day === 'tomorrow';
+              const head = `<div style="${label}">Best window ${tmr ? 'tomorrow' : 'today'}</div>`;
+              if (!entity || ['unavailable', 'unknown'].includes(entity.state) || !H.length)
+                return `<div style="color:var(--s-ink)">${head}<div style="font-size:15px;margin-top:10px;color:var(--s-label)">No data</div></div>`;
+              if (!a.window_day) return `<div style="color:var(--s-ink)">${head}<div style="font-size:28px;font-weight:700;margin-top:10px">No window today</div></div>`;
+              const W = (a.window_hours || []).filter(x => x.wave != null), h = W[0] || {};
+              const winds = W.map(x => x.wind).filter(x => x != null);
+              const lo = Math.min(...winds), hi = Math.max(...winds);
+              const windTxt = !winds.length ? '' : lo === hi ? `${lo} kn` : `${lo}–${hi} kn`;
+              const rel = (h.wind_rel || '').toLowerCase();
+              const t = iso => new Date(iso).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+              // the tide extremes that fall inside the window, if any
+              const ext = (a.window_tides || []).map(x => [x.type, x.time]);
+              const trend = h.tide_trend;
+              const tideWhy = !trend ? '' : ` Tide ${trend}` + (ext.length ? `, ${ext[0][0]} at ${t(ext[0][1])}.` : '.');
+              const why = (a.window_score === 'fair' ? `No good hours${tmr ? ' tomorrow' : ''}; longest fair stretch. ` : '')
+                + (rel ? `${rel[0].toUpperCase() + rel.slice(1)} wind ${windTxt}.` : '') + tideWhy;
+              const chip = (txt, on) => `<div style="background:${on ? 'var(--s-accent)' : 'var(--s-soft)'};color:${on ? 'var(--s-on-accent)' : 'var(--s-chip-ink)'};border-radius:999px;padding:7px 12px;font-size:14px;font-weight:600">${txt}</div>`;
+              return `
+                <div style="display:flex;flex-direction:column;gap:14px;color:var(--s-ink)">
+                  ${head}
+                  <div style="font-size:40px;font-weight:700;letter-spacing:-.02em;line-height:1">${entity.state}</div>
+                  <div style="font-size:15px;line-height:1.4;color:var(--s-ink2)">${why}</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:8px">
+                    ${h.swell != null ? chip(`${h.swell} ft @ ${h.swell_period} s`, true) : ''}
+                    ${rel ? chip(`${windTxt} ${rel}`) : ''}
+                    ${trend ? chip(`Tide ${trend === 'rising' ? '↑' : '↓'} ${trend}`) : ''}
+                  </div>
+                </div>`;
+            ]]]
+      - type: custom:button-card
+        entity: sensor.surf_hourly
+        template: surf_card
+        styles:
+          card:
+          - padding: 18px 16px 14px
+        custom_fields:
+          body: |
+            [[[
+              const a = (entity && entity.attributes) || {}, H = a.hours || [];
+              const title = '<div style="font-size:17px;font-weight:700">Today</div>';
+              if (!entity || ['unavailable', 'unknown'].includes(entity.state) || !H.length || !H.some(h => h.wave != null))
+                return `<div style="display:flex;flex-direction:column;gap:8px;color:var(--s-ink);padding:0 4px">${title}<div style="color:var(--s-label)">No data</div></div>`;
+              const n = H.length, start = H[0].hour;
+              const col = {good: 'var(--s-accent)', fair: 'var(--s-fair)', poor: 'var(--s-poor)'};
+              const maxW = Math.max(1, ...H.filter(h => h.wave != null).map(h => h.wave));
+              const pct = x => ((x - start) / n * 100).toFixed(2) + '%';
+              const grid = `display:grid;grid-template-columns:repeat(${n},minmax(0,1fr));gap:3px`;
+              const legend = Object.entries(col).map(([k, c]) => `<div style="display:flex;gap:5px;align-items:center"><div style="width:10px;height:10px;border-radius:3px;background:${c}"></div>${k[0].toUpperCase() + k.slice(1)}</div>`).join('');
+              const band = a.window_start == null ? '' :
+                `<div style="position:absolute;top:0;bottom:0;left:${pct(a.window_start)};width:${((a.window_end - a.window_start) / n * 100).toFixed(2)}%;background:var(--s-band);border-radius:10px"></div>`;
+              const bars = H.map(h => h.wave == null
+                ? `<div style="display:flex;flex-direction:column;justify-content:flex-end;height:100%"><div style="height:2px;background:var(--s-soft);border-radius:1px"></div></div>`
+                : `<div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:3px">
+                    <div style="font-size:10px;font-weight:600;color:var(--s-ink2)">${(+h.wave).toFixed(1).replace('.0', '')}</div>
+                    <div style="width:100%;height:${Math.max(4, Math.round(h.wave / maxW * 62))}px;background:${col[h.score] || col.poor};border-radius:4px"></div>
+                  </div>`).join('');
+              // Tide strip: labels on top (0-13px), curve track below (14-48px). The curve is
+              // half-cosine interpolation between consecutive high/low extremes from
+              // a.tides, drawn only where a time is bracketed by two extremes (never
+              // extrapolated). The "now" line spans the track only, so it never covers labels.
+              const d = new Date(), nowH = d.getHours() + d.getMinutes() / 60;
+              const day0 = new Date(d); day0.setHours(0, 0, 0, 0);
+              const hr = x => (new Date(x) - day0) / 3600e3;
+              const short = x => new Date(x).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}).replace(/\s?([AP])M/i, (m, p) => p.toLowerCase());
+              const inView = x => x != null && x >= start && x <= start + n;
+              const E = (Array.isArray(a.tides) ? a.tides : [])
+                .filter(e => e && e.time && typeof e.height === 'number')
+                .map(e => ({h: hr(e.time), ft: e.height, type: e.type, time: e.time}))
+                .sort((p, q) => p.h - q.h);
+              const TOP = 14, TH = 34;
+              const at = x => {
+                for (let i = 0; i < E.length - 1; i++) {
+                  const p = E[i], q = E[i + 1];
+                  if (x >= p.h && x <= q.h) return p.ft + (q.ft - p.ft) * (1 - Math.cos(Math.PI * (x - p.h) / ((q.h - p.h) || 1))) / 2;
+                }
+                return null;
+              };
+              const S = [];
+              for (let x = start; x <= start + n + 1e-9; x += 1 / 6) { const v = at(x); if (v != null) S.push([x, v]); }
+              const lo = S.length ? Math.min(...S.map(p => p[1])) : 0, hi = S.length ? Math.max(...S.map(p => p[1])) : 1;
+              const yOf = v => 2 + (1 - (v - lo) / ((hi - lo) || 1)) * (TH - 6);
+              const xOf = x => (x - start) / n * 320;
+              let curve = '';
+              if (S.length > 1) {
+                const line = 'M' + S.map(([x, v]) => `${xOf(x).toFixed(1)} ${yOf(v).toFixed(1)}`).join(' L');
+                curve = `<svg viewBox="0 0 320 ${TH}" preserveAspectRatio="none" style="position:absolute;left:0;top:${TOP}px;display:block;width:100%;height:${TH}px">
+                  <path d="${line} L${xOf(S[S.length - 1][0]).toFixed(1)} ${TH} L${xOf(S[0][0]).toFixed(1)} ${TH} Z" style="fill:var(--s-tide-fill)"/>
+                  <path d="${line}" style="fill:none;stroke:var(--s-accent)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+              }
+              // marks: every extreme in view when there is a curve, else just the next low/high
+              const M = S.length > 1
+                ? E.filter(e => inView(e.h)).map(e => [e.type, e.time, e.h, e.ft])
+                : [['low', a.next_low], ['high', a.next_high]].filter(([, v]) => v && new Date(v).toDateString() === d.toDateString())
+                    .map(([k, v]) => [k, v, hr(v), null]).filter(m => inView(m[2]));
+              const marks = M.map(([k, v, x, ft]) => {
+                const p = (x - start) / n * 100, right = p > 70, ok = ft != null && S.length > 1;
+                return `<div style="position:absolute;top:0;${right ? `right:${(100 - p).toFixed(2)}%;text-align:right` : `left:${p.toFixed(2)}%`};font-size:10px;font-weight:600;color:var(--s-chip-ink);white-space:nowrap;padding:0 4px;line-height:12px">${k === 'high' ? 'High' : 'Low'} ${short(v)}</div>
+                  <div style="position:absolute;top:${TOP}px;height:${TH}px;left:${p.toFixed(2)}%;width:1px;background:var(--s-tick)"></div>
+                  ${ok ? `<div style="position:absolute;top:${(TOP + yOf(ft) - 3).toFixed(1)}px;left:${p.toFixed(2)}%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:var(--s-accent)"></div>` : ''}`;
+              }).join('');
+              const trendTxt = S.length < 2 && a.tide_trend && !marks ? `<div style="position:absolute;top:0;left:4px;font-size:10px;color:var(--s-label)">Tide ${a.tide_trend}</div>` : '';
+              const base = S.length < 2 ? `<div style="position:absolute;left:0;right:0;top:${TOP + TH - 4}px;height:2px;background:var(--s-track);border-radius:1px"></div>` : '';
+              const nowLine = nowH >= start && nowH <= start + n ?
+                `<div style="position:absolute;top:${TOP}px;height:${TH}px;left:${pct(nowH)};width:2px;margin-left:-1px;background:var(--s-ink);border-radius:1px"></div>` : '';
+              const tide = `<div style="position:relative;height:${TOP + TH}px">${base}${curve}${marks}${trendTxt}${nowLine}</div>`;
+              const wind = H.map((h, i) => {
+                const hr12 = ((h.hour + 11) % 12) + 1, lbl = i % 3 === 0 ? hr12 + (h.hour < 12 ? 'a' : 'p') : '';
+                const c = h.score === 'good' ? 'var(--s-accent)' : 'var(--s-label)';
+                // arrow points where the wind blows (from N -> down)
+                const arrow = h.wind_dir != null
+                  ? `<div style="font-size:12px;line-height:1;height:12px;transform:rotate(${h.wind_dir}deg);color:${c}">↓</div>`
+                  : `<div style="height:12px"></div>`;
+                return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+                  ${arrow}
+                  <div style="font-size:10px;color:${h.wind == null ? 'var(--s-muted)' : 'var(--s-ink2)'}">${h.wind == null ? '' : h.wind}</div>
+                  <div style="font-size:10px;color:var(--s-muted);min-height:12px">${lbl}</div></div>`;
+              }).join('');
+              return `
+                <div style="display:flex;flex-direction:column;gap:10px;color:var(--s-ink)">
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding:0 4px">
+                    ${title}
+                    <div style="display:flex;gap:10px;font-size:12px;color:var(--s-label)">${legend}</div>
+                  </div>
+                  <div style="position:relative">
+                    ${band}
+                    <div style="position:relative;${grid};align-items:end;height:96px;padding-bottom:4px">${bars}</div>
+                    ${tide}
+                    <div style="position:relative;${grid};padding-top:6px">${wind}</div>
+                  </div>
+                  <div style="font-size:11px;color:var(--s-muted);padding:0 4px">Bars: wave ft · ${S.length > 1 ? 'Curve: tide, low/high marked' : 'Marks: next low/high tide'} · Arrows: wind kn</div>
+                </div>`;
+            ]]]
+      - type: custom:button-card
+        entity: sensor.surf_hourly
+        template: surf_card
+        styles:
+          card:
+          - padding: 18px 20px
+        custom_fields:
+          body: |
+            [[[
+              const a = (entity && entity.attributes) || {}, h = a.now || {};
+              const d = new Date();
+              const now = d.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+              const title = `<div style="font-size:17px;font-weight:700">Right now <span style="font-weight:400;color:var(--s-muted);font-size:14px">· ${now}</span></div>`;
+              if (!entity || ['unavailable', 'unknown'].includes(entity.state) || (h.wave == null && h.wind == null))
+                return `<div style="display:flex;flex-direction:column;gap:8px;color:var(--s-ink)">${title}<div style="color:var(--s-label)">No data</div></div>`;
+              const card = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+              const dir = deg => deg == null ? '' : `${card[Math.round(deg / 22.5) % 16]} ${deg}°`;
+              const v = x => x == null ? '—' : x;
+              const t = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) : '—';
+              const sub = (...p) => p.filter(Boolean).join(' · ') || '—';
+              const g = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px';
+              const big = (lbl, val, u, s) => `<div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+                <div style="font-size:12px;color:var(--s-label)">${lbl}</div>
+                <div style="font-size:24px;font-weight:700">${v(val)}<span style="font-size:14px;font-weight:500"> ${val == null ? '' : u}</span></div>
+                <div style="font-size:13px;color:var(--s-ink2)">${s}</div></div>`;
+              const small = (lbl, val) => `<div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+                <div style="font-size:12px;color:var(--s-label)">${lbl}</div><div style="font-size:16px;font-weight:600">${val}</div></div>`;
+              return `
+                <div style="display:flex;flex-direction:column;gap:14px;color:var(--s-ink)">
+                  ${title}
+                  <div style="${g}">
+                    ${big('Waves', h.wave, 'ft', sub(h.wave_period != null && `${h.wave_period} s`, dir(h.wave_dir)))}
+                    ${big('Swell', h.swell, 'ft', sub(h.swell_period != null && `${h.swell_period} s`, dir(h.swell_dir)))}
+                    ${big('Wind', h.wind, 'kn', sub(h.gust != null && `G ${h.gust}`, dir(h.wind_dir)))}
+                  </div>
+                  <div style="height:1px;background:var(--s-divider)"></div>
+                  <div style="${g}">
+                    ${small('Next low', t(a.next_low))}
+                    ${small('Next high', t(a.next_high))}
+                    ${small('Wind quality', v(h.wind_rel))}
+                  </div>
+                </div>`;
+            ]]]
